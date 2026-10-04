@@ -59,6 +59,12 @@ public sealed class FavoriteEventHandler : IHostedService
     /// <param name="e">The event arguments.</param>
     private void OnUserDataSaved(object? sender, UserDataSaveEventArgs e)
     {
+        // Fresh SQLite installs are inert until explicitly enabled.
+        if (!Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled)))
+        {
+            return;
+        }
+
         // Only process UpdateUserRating events (used when favorites are added/removed)
         if (e.SaveReason != UserDataSaveReason.UpdateUserRating)
         {
