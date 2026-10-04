@@ -24,7 +24,7 @@ public sealed class SqlitePilotLibraryTask : IScheduledTask
     public string Name => "JellyBridge-SQLite One Movie Library Scan";
     public string Key => "JellyBridgeSQLiteMovieLibraryScan";
     public string Description =>
-        "Creates/verifies the Discover Movies root library and scans only the one SQLite pilot movie. No global library scan. Manual-only.";
+        "Refreshes only the existing Discover Movies root library for the one SQLite pilot movie. Uses JellyBridge's QueueRefresh pattern; no global library scan. Manual-only.";
     public string Category => "JellyBridge-SQLite";
 
     public async Task ExecuteAsync(
@@ -47,9 +47,8 @@ public sealed class SqlitePilotLibraryTask : IScheduledTask
         progress.Report(100);
 
         _logger.LogInformation(
-            "JellyBridge-SQLite One Movie Library Scan completed | Library={Library} | Created={Created} | LibraryId={LibraryId} | MovieId={MovieId} | TMDB={TmdbId} | Title={Title} | Path={Path}",
+            "JellyBridge-SQLite One Movie Library Scan completed | Library={Library} | LibraryId={LibraryId} | MovieId={MovieId} | TMDB={TmdbId} | Title={Title} | Path={Path}",
             result.LibraryName,
-            result.LibraryCreated,
             result.LibraryItemId,
             result.MovieItemId,
             result.TmdbId,
