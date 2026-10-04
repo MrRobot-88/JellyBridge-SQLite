@@ -1,18 +1,18 @@
 using Jellyfin.Plugin.JellyBridge.JellyfinModels;
 using Jellyfin.Plugin.JellyBridge.Utils;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Providers;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
-using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyBridge.Services;
 
 /// <summary>
 /// Controlled one-item Jellyfin library pilot for the SQLite-first path.
-/// The library structure follows the original JellyBridge setup, while the
-/// refresh path mirrors JellyBridge's proven IProviderManager.QueueRefresh
-/// sequence and is restricted to the Discover Movies library only.
+/// JellyBridge-SQLite owns the NFO/poster/placeholder files; Jellyfin is configured
+/// to read those local files without writing metadata back to the materialization tree.
+/// New materialized paths are reported directly through ILibraryMonitor so no global
+/// library scan and no broad QueueRefresh sequence is required.
 /// </summary>
 public sealed class SqlitePilotLibraryService
 {
@@ -23,19 +23,16 @@ public sealed class SqlitePilotLibraryService
     private static readonly TimeSpan PilotPollInterval = TimeSpan.FromMilliseconds(500);
 
     private readonly JellyfinILibraryManager _libraryManager;
-    private readonly JellyfinIProviderManager _providerManager;
-    private readonly IDirectoryService _directoryService;
+    private readonly ILibraryMonitor _libraryMonitor;
     private readonly ILogger<SqlitePilotLibraryService> _logger;
 
     public SqlitePilotLibraryService(
         JellyfinILibraryManager libraryManager,
-        JellyfinIProviderManager providerManager,
-        IDirectoryService directoryService,
+        ILibraryMonitor libraryMonitor,
         ILogger<SqlitePilotLibraryService> logger)
     {
         _libraryManager = libraryManager;
-        _providerManager = providerManager;
-        _directoryService = directoryService;
+        _libraryMonitor = libraryMonitor;
         _logger = logger;
     }
 
@@ -61,13 +58,15 @@ public sealed class SqlitePilotLibraryService
                 $"Pilot library refresh requires exactly one materialized movie folder; found {materializedFolders.Length}.");
         }
 
-        if (!Path.GetFileName(materializedFolders[0])
+        var materializedMoviePath = Path.GetFullPath(materializedFolders[0]);
+
+        if (!Path.GetFileName(materializedMoviePath)
             .Contains(
                 $"tmdbid-{PilotMovieTmdbId}",
                 StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                $"The one materialized movie is not pilot TMDB {PilotMovieTmdbId}: {materializedFolders[0]}");
+                $"The one materialized movie is not pilot TMDB {PilotMovieTmdbId}: {materializedMoviePath}");
         }
 
         var virtualFolders = _libraryManager.Inner
@@ -131,12 +130,15 @@ public sealed class SqlitePilotLibraryService
             ?? throw new InvalidOperationException(
                 $"Could not resolve '{PilotLibraryName}' as a Jellyfin CollectionFolder.");
 
-        // The SQLite materializer provides the local NFO and compact poster.
-        // Disable remote metadata/image providers for this Discover working set,
-        // while keeping the local NFO and local image providers available.
+        // JellyBridge-SQLite owns the local metadata files. Jellyfin may read them,
+        // but must never write NFO metadata back into the materialization tree.
+        // Keeping MetadataSavers as an explicit empty array is important: on Jellyfin
+        // 12, ReplaceAllMetadata can otherwise suppress local NFO readers when an NFO
+        // saver is considered available.
         var libraryOptions = libraryFolder.GetLibraryOptions();
         libraryOptions.EnableRealtimeMonitor = false;
         libraryOptions.SaveLocalMetadata = false;
+        libraryOptions.MetadataSavers = Array.Empty<string>();
         libraryOptions.DisabledLocalMetadataReaders = Array.Empty<string>();
         libraryOptions.LocalMetadataReaderOrder = ["Nfo"];
 
@@ -163,7 +165,7 @@ public sealed class SqlitePilotLibraryService
         libraryFolder.UpdateLibraryOptions(libraryOptions);
 
         _logger.LogInformation(
-            "SQLITE PILOT LIBRARY OPTIONS | Library={Library} | RemoteMetadata=OFF | RemoteImages=OFF | LocalNfo=ON | LocalImages=ON | RealtimeMonitor=OFF",
+            "SQLITE PILOT LIBRARY OPTIONS | Library={Library} | RemoteMetadata=OFF | RemoteImages=OFF | LocalNfo=ON | MetadataSavers=OFF | LocalImages=ON | RealtimeMonitor=OFF",
             PilotLibraryName);
 
         var indexedBefore = _libraryManager
@@ -178,84 +180,24 @@ public sealed class SqlitePilotLibraryService
             indexedBefore.Count,
             PilotMovieTmdbId);
 
-        // This mirrors the original JellyBridge RefreshService sequence:
-        // 1) Full refresh at High priority to remove stale Jellyfin index items.
-        // 2) Default refresh at Normal priority for normal updates/user data.
-        // 3) Full create refresh at Low priority for the newly materialized item.
-        // Only Discover Movies is queued; no global Jellyfin scan is started.
-        var removeOptions = new MetadataRefreshOptions(_directoryService)
-        {
-            MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-            ImageRefreshMode = MetadataRefreshMode.FullRefresh,
-            ReplaceAllMetadata = false,
-            ReplaceAllImages = false,
-            RegenerateTrickplay = false,
-            ForceSave = true,
-            IsAutomated = true,
-            RemoveOldMetadata = false
-        };
-
-        var updateOptions = new MetadataRefreshOptions(_directoryService)
-        {
-            MetadataRefreshMode = MetadataRefreshMode.Default,
-            ImageRefreshMode = MetadataRefreshMode.Default,
-            ReplaceAllMetadata = false,
-            ReplaceAllImages = false,
-            RegenerateTrickplay = false,
-            ForceSave = true,
-            IsAutomated = true,
-            RemoveOldMetadata = false
-        };
-
-        var createOptions = new MetadataRefreshOptions(_directoryService)
-        {
-            MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-            ImageRefreshMode = MetadataRefreshMode.FullRefresh,
-            ReplaceAllMetadata = true,
-            ReplaceAllImages = false,
-            RegenerateTrickplay = false,
-            ForceSave = true,
-            IsAutomated = false,
-            RemoveOldMetadata = false
-        };
-
+        // This is the same Jellyfin-internal path reached by POST /Library/Media/Updated,
+        // but called directly from the plugin. It reports exactly the new materialized
+        // movie directory and lets Jellyfin's FileRefresher discover/index that branch.
+        // No API key, HTTP call, global scan, or whole-library QueueRefresh is needed.
         _logger.LogInformation(
-            "SQLITE PILOT LIBRARY REMOVE QUEUE | Library={Library} | LibraryId={LibraryId} | IndexedBefore={IndexedBefore} | GlobalScan=NO",
+            "SQLITE PILOT PATH NOTIFY | Library={Library} | Path={Path} | TMDB={TmdbId} | Method=ILibraryMonitor.ReportFileSystemChanged | GlobalScan=NO",
             PilotLibraryName,
-            libraryItemId,
-            indexedBefore.Count);
-
-        _providerManager.QueueRefresh(
-            libraryItemId,
-            removeOptions,
-            RefreshPriority.High);
-
-        _logger.LogInformation(
-            "SQLITE PILOT LIBRARY UPDATE QUEUE | Library={Library} | LibraryId={LibraryId} | GlobalScan=NO",
-            PilotLibraryName,
-            libraryItemId);
-
-        _providerManager.QueueRefresh(
-            libraryItemId,
-            updateOptions,
-            RefreshPriority.Normal);
-
-        _logger.LogInformation(
-            "SQLITE PILOT LIBRARY CREATE QUEUE | Library={Library} | LibraryId={LibraryId} | Path={Path} | TMDB={TmdbId} | GlobalScan=NO",
-            PilotLibraryName,
-            libraryItemId,
-            expectedMoviesPath,
+            materializedMoviePath,
             PilotMovieTmdbId);
 
-        _providerManager.QueueRefresh(
-            libraryItemId,
-            createOptions,
-            RefreshPriority.Low);
+        _libraryMonitor.ReportFileSystemChanged(materializedMoviePath);
 
         var deadline = DateTime.UtcNow + PilotRefreshTimeout;
         JellyfinMovie? movie = null;
         var lastCount = -1;
         long? lastTmdbId = null;
+        int? lastYear = null;
+        string lastGenres = string.Empty;
 
         while (DateTime.UtcNow < deadline)
         {
@@ -267,38 +209,44 @@ public sealed class SqlitePilotLibraryService
                         [expectedMoviesPath],
                         StringComparer.Ordinal));
 
-            var currentTmdbId = movies.Count == 1
-                ? movies[0].GetTmdbId()
+            var candidate = movies.Count == 1
+                ? movies[0]
                 : null;
 
+            var currentTmdbId = candidate?.GetTmdbId();
+            var currentMovie = candidate?.GetMovie();
+            var currentYear = currentMovie?.ProductionYear;
+            var currentGenres = currentMovie?.Genres ?? Array.Empty<string>();
+            var currentGenresText = string.Join(",", currentGenres);
+
             if (movies.Count != lastCount
-                || currentTmdbId != lastTmdbId)
+                || currentTmdbId != lastTmdbId
+                || currentYear != lastYear
+                || !string.Equals(currentGenresText, lastGenres, StringComparison.Ordinal))
             {
                 _logger.LogInformation(
-                    "SQLITE PILOT LIBRARY WAIT | Library={Library} | IndexedMovies={IndexedMovies} | SingleTmdb={SingleTmdb} | ExpectedTmdb={ExpectedTmdb}",
+                    "SQLITE PILOT PATH WAIT | Library={Library} | IndexedMovies={IndexedMovies} | SingleTmdb={SingleTmdb} | Year={Year} | Genres={Genres} | ExpectedTmdb={ExpectedTmdb}",
                     PilotLibraryName,
                     movies.Count,
                     currentTmdbId?.ToString() ?? "<none>",
+                    currentYear?.ToString() ?? "<none>",
+                    string.IsNullOrEmpty(currentGenresText) ? "<none>" : currentGenresText,
                     PilotMovieTmdbId);
 
                 lastCount = movies.Count;
                 lastTmdbId = currentTmdbId;
+                lastYear = currentYear;
+                lastGenres = currentGenresText;
             }
 
-            // More than one item is expected while Jellyfin removes the stale
-            // legacy index entries. Keep waiting instead of failing immediately.
-            if (movies.Count == 1)
+            if (candidate is not null
+                && candidate.GetTmdbId() == PilotMovieTmdbId
+                && string.Equals(candidate.Name, "Union County", StringComparison.Ordinal)
+                && currentYear == 2026
+                && currentGenres.Contains("Drama", StringComparer.OrdinalIgnoreCase))
             {
-                movie = movies[0];
-
-                if (movie.GetTmdbId() == PilotMovieTmdbId)
-                {
-                    break;
-                }
-            }
-            else
-            {
-                movie = null;
+                movie = candidate;
+                break;
             }
 
             await Task.Delay(
@@ -309,23 +257,23 @@ public sealed class SqlitePilotLibraryService
         if (movie is null)
         {
             throw new TimeoutException(
-                $"Timed out waiting for Jellyfin to converge to one pilot movie. Last indexed movie count: {lastCount}; expected TMDB {PilotMovieTmdbId}.");
+                $"Timed out waiting for Jellyfin targeted path import. Last indexed movie count: {lastCount}; TMDB={lastTmdbId?.ToString() ?? "<none>"}; Year={lastYear?.ToString() ?? "<none>"}; Genres={lastGenres}; expected TMDB {PilotMovieTmdbId}, Year=2026, Genre=Drama.");
         }
 
-        if (movie.GetTmdbId() != PilotMovieTmdbId)
-        {
-            throw new InvalidOperationException(
-                $"Targeted refresh converged to TMDB {movie.GetTmdbId()?.ToString() ?? "<none>"}; expected {PilotMovieTmdbId}.");
-        }
+        var resolvedMovie = movie.GetMovie()
+            ?? throw new InvalidOperationException(
+                "Jellyfin pilot movie wrapper does not contain a Movie instance.");
 
         _logger.LogInformation(
-            "SQLITE PILOT LIBRARY REFRESH COMPLETE | Library={Library} | IndexedBefore={IndexedBefore} | IndexedAfter=1 | LibraryId={LibraryId} | JellyfinMovieId={MovieId} | TMDB={TmdbId} | Title={Title} | Path={Path} | GlobalScan=NO",
+            "SQLITE PILOT PATH IMPORT COMPLETE | Library={Library} | IndexedBefore={IndexedBefore} | IndexedAfter=1 | LibraryId={LibraryId} | JellyfinMovieId={MovieId} | TMDB={TmdbId} | Title={Title} | Year={Year} | Genres={Genres} | Path={Path} | GlobalScan=NO",
             PilotLibraryName,
             indexedBefore.Count,
             libraryItemId,
             movie.Id,
             PilotMovieTmdbId,
             movie.Name,
+            resolvedMovie.ProductionYear,
+            string.Join(",", resolvedMovie.Genres),
             movie.Path);
 
         return new SqlitePilotLibraryResult(
