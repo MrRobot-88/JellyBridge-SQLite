@@ -147,6 +147,118 @@ public sealed class CatalogSelectionService
         return result;
     }
 
+
+    /// <summary>
+    /// Finds one exact TMDB item in the ranked Discover Catalog and applies
+    /// the same eligibility policy used by the normal desired-set builder.
+    /// Intended for controlled diagnostics/pilots where rank must not choose
+    /// a different title.
+    /// </summary>
+    public async Task<DesiredCatalogItem> GetDesiredByTmdbIdAsync(
+        string mediaType,
+        long tmdbId,
+        CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(tmdbId),
+                "TMDB id must be greater than zero.");
+        }
+
+        var minimumYear = Plugin.GetConfigOrDefault<int>(
+            nameof(PluginConfiguration.DiscoverMinimumYear));
+
+        var excludeIndia = Plugin.GetConfigOrDefault<bool>(
+            nameof(PluginConfiguration.DiscoverExcludeIndia));
+
+        var offset = 0;
+        var total = int.MaxValue;
+
+        while (offset < total)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var page = await _catalog.GetPageAsync(
+                mediaType,
+                offset,
+                DiscoverCatalogClient.MaximumPageSize,
+                cancellationToken).ConfigureAwait(false);
+
+            total = page.Total;
+
+            if (page.Items.Count == 0)
+            {
+                break;
+            }
+
+            var item = page.Items.FirstOrDefault(
+                candidate => candidate.TmdbId == tmdbId);
+
+            if (item is not null)
+            {
+                if (!item.Year.HasValue || item.Year.Value < minimumYear)
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} was found but is excluded by minimum year {minimumYear}.");
+                }
+
+                if (string.IsNullOrWhiteSpace(item.PosterPath))
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} was found but has no posterPath.");
+                }
+
+                if (item.Adult)
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} was found but is marked adult.");
+                }
+
+                if (IsFutureRelease(item.ReleaseDate))
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} was found but releaseDate {item.ReleaseDate} is still in the future.");
+                }
+
+                if (excludeIndia && IsIndian(item))
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} was found but is excluded by the India filter.");
+                }
+
+                var normalizedMediaType =
+                    string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(mediaType, "series", StringComparison.OrdinalIgnoreCase)
+                        ? "tv"
+                        : "movie";
+
+                var desired = new DesiredCatalogItem(
+                    normalizedMediaType,
+                    item.TmdbId,
+                    BuildTargetPath(normalizedMediaType, item),
+                    BuildFingerprint(normalizedMediaType, item),
+                    item);
+
+                _logger.LogInformation(
+                    "Catalog exact item selected: media={MediaType}, tmdb={TmdbId}, rank={Rank}, title={Title}, scannedThrough={ScannedThrough}, catalogTotal={Total}",
+                    mediaType,
+                    tmdbId,
+                    item.Rank,
+                    item.Title,
+                    offset + page.Items.Count,
+                    total);
+
+                return desired;
+            }
+
+            offset += page.Items.Count;
+        }
+
+        throw new InvalidOperationException(
+            $"TMDB {tmdbId} was not found in the Discover Catalog {mediaType} feed.");
+    }
+
     private static bool IsFutureRelease(string releaseDate)
     {
         if (string.IsNullOrWhiteSpace(releaseDate))
