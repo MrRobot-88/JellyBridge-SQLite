@@ -101,6 +101,15 @@ public sealed class SqlitePilotLibraryService
                 PathInfos =
                 [
                     new MediaPathInfo(moviesPath)
+                ],
+                EnableRealtimeMonitor = false,
+                SaveLocalMetadata = false,
+                TypeOptions =
+                [
+                    new TypeOptions
+                    {
+                        Type = "Movie"
+                    }
                 ]
             };
 
@@ -188,7 +197,7 @@ public sealed class SqlitePilotLibraryService
         var refreshOptions = new MetadataRefreshOptions(_directoryService)
         {
             MetadataRefreshMode = MetadataRefreshMode.Default,
-            ImageRefreshMode = MetadataRefreshMode.None,
+            ImageRefreshMode = MetadataRefreshMode.Default,
             ReplaceAllMetadata = false,
             ReplaceAllImages = false,
             RegenerateTrickplay = false,
