@@ -89,6 +89,11 @@ public sealed class CatalogSelectionService
                     continue;
                 }
 
+                if (string.IsNullOrWhiteSpace(item.PosterPath))
+                {
+                    continue;
+                }
+
                 if (item.Adult || IsFutureRelease(item.ReleaseDate))
                 {
                     continue;
@@ -221,6 +226,7 @@ public sealed class CatalogSelectionService
             item.BackdropPath,
             item.VoteAverage,
             item.VoteCount,
+            item.GenreIds,
             item.GenreNames,
             item.OriginalLanguage,
             item.OriginCountries,
