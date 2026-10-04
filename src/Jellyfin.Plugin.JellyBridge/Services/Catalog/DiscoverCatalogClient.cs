@@ -83,6 +83,90 @@ public sealed class DiscoverCatalogClient
         return page;
     }
 
+    public async Task<DiscoverCatalogPage> GetFilteredPageAsync(
+        string mediaType,
+        int offset,
+        int limit,
+        string sort,
+        int? year,
+        string? letter,
+        CancellationToken cancellationToken = default)
+    {
+        offset = Math.Max(0, offset);
+        limit = Math.Clamp(limit, 1, MaximumPageSize);
+
+        var baseUrl = Plugin.GetConfigOrDefault<string>(
+            nameof(PluginConfiguration.DiscoverCatalogUrl));
+
+        var path = string.Equals(
+            mediaType,
+            "tv",
+            StringComparison.OrdinalIgnoreCase)
+            || string.Equals(
+                mediaType,
+                "series",
+                StringComparison.OrdinalIgnoreCase)
+            ? "/catalog/series"
+            : "/catalog/movies";
+
+        var query = new List<string>
+        {
+            "sort=" + Uri.EscapeDataString(
+                string.IsNullOrWhiteSpace(sort)
+                    ? "rank"
+                    : sort),
+            "offset=" + offset,
+            "limit=" + limit
+        };
+
+        if (year.HasValue)
+        {
+            query.Add("year=" + year.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(letter))
+        {
+            query.Add(
+                "letter=" + Uri.EscapeDataString(letter));
+        }
+
+        var url =
+            $"{baseUrl.TrimEnd('/')}{path}?{string.Join("&", query)}";
+
+        using var response = await _httpClient.GetAsync(
+            url,
+            cancellationToken).ConfigureAwait(false);
+
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content
+            .ReadAsStreamAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var page = await JsonSerializer.DeserializeAsync<DiscoverCatalogPage>(
+            stream,
+            JsonOptions,
+            cancellationToken).ConfigureAwait(false);
+
+        if (page is null)
+        {
+            throw new InvalidOperationException(
+                $"Discover Catalog returned an empty filtered response for {mediaType}.");
+        }
+
+        _logger.LogDebug(
+            "Discover Catalog filtered page: media={MediaType}, sort={Sort}, year={Year}, letter={Letter}, offset={Offset}, returned={Returned}, total={Total}",
+            mediaType,
+            sort,
+            year,
+            letter,
+            page.Offset,
+            page.Returned,
+            page.Total);
+
+        return page;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
