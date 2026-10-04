@@ -52,6 +52,8 @@ public sealed class SqlitePilotMaterializerService
             .GetDesiredByTmdbIdAsync(
                 "movie",
                 PilotMovieTmdbId,
+                2026,
+                "U",
                 cancellationToken)
             .ConfigureAwait(false);
 
