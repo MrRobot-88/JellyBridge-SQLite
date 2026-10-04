@@ -5,6 +5,7 @@ using Jellyfin.Plugin.JellyBridge.Configuration;
 using Jellyfin.Plugin.JellyBridge.Tasks;
 using Jellyfin.Plugin.JellyBridge.Services;
 using Jellyfin.Plugin.JellyBridge.Services.Sqlite;
+using Jellyfin.Plugin.JellyBridge.Services.Catalog;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Jellyfin.Plugin.JellyBridge.JellyfinModels;
@@ -28,6 +29,10 @@ namespace Jellyfin.Plugin.JellyBridge.Services
             // second AddScoped<ApiService>() as it would override this and cause
             // ObjectDisposedException in Jellyfin 10.11.5+.
             serviceCollection.AddHttpClient<ApiService>();
+
+            // UI ARR master catalog remains external/read-only to this plugin.
+            serviceCollection.AddHttpClient<DiscoverCatalogClient>();
+            serviceCollection.AddTransient<CatalogSelectionService>();
 
             // Register Jellyfin wrapper classes as transient to avoid scope disposal issues
             serviceCollection.AddTransient<JellyfinILibraryManager>(provider =>
