@@ -25,6 +25,11 @@ public class PluginConfiguration : BasePluginConfiguration
         { nameof(SyncIntervalHours), 24.0 },
         { nameof(EnableStartupSync), false },
         { nameof(StartupDelaySeconds), 30 },
+        { nameof(DiscoverCatalogUrl), "http://172.17.0.1:5057" },
+        { nameof(DiscoverMovieTargetCount), 1000 },
+        { nameof(DiscoverSeriesTargetCount), 1000 },
+        { nameof(DiscoverMinimumYear), 1990 },
+        { nameof(DiscoverExcludeIndia), true },
 
         // Discover / Sync Settings
         { nameof(Region), "US" },
@@ -136,6 +141,33 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the delay in seconds before running the auto-sync on startup task.
     /// </summary>
     public int? StartupDelaySeconds { get; set; }
+
+    /// <summary>
+    /// Gets or sets the read-only UI ARR Discover Catalog base URL.
+    /// </summary>
+    public string DiscoverCatalogUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the desired Discover Movies working-set size.
+    /// </summary>
+    public int? DiscoverMovieTargetCount { get; set; }
+
+    /// <summary>
+    /// Gets or sets the desired Discover Series working-set size.
+    /// </summary>
+    public int? DiscoverSeriesTargetCount { get; set; }
+
+    /// <summary>
+    /// Gets or sets the minimum release/first-air year accepted into the working set.
+    /// This is catalog selection policy, not a Jellyfin UI filter.
+    /// </summary>
+    public int? DiscoverMinimumYear { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether India/Indian-language titles should be excluded
+    /// from the Discover working set when catalog metadata identifies them.
+    /// </summary>
+    public bool? DiscoverExcludeIndia { get; set; }
 
     /// <summary>
     /// Gets or sets the timeout in minutes for plugin tasks before cancelling.
