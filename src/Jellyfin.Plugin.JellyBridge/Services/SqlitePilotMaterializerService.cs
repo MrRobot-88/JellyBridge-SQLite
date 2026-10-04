@@ -13,6 +13,8 @@ namespace Jellyfin.Plugin.JellyBridge.Services;
 /// </summary>
 public sealed class SqlitePilotMaterializerService
 {
+    public const long PilotMovieTmdbId = 1482938;
+
     private readonly CatalogSelectionService _selection;
     private readonly DiscoverPosterService _posterService;
     private readonly PlaceholderVideoGenerator _placeholderVideoGenerator;
@@ -46,17 +48,18 @@ public sealed class SqlitePilotMaterializerService
                 $"One-movie pilot requires an empty materialized_items table; found {existing.Count} row(s).");
         }
 
-        var desired = await _selection
-            .GetDesiredAsync("movie", 1, cancellationToken)
+        var item = await _selection
+            .GetDesiredByTmdbIdAsync(
+                "movie",
+                PilotMovieTmdbId,
+                cancellationToken)
             .ConfigureAwait(false);
 
-        if (desired.Count != 1)
+        if (item.TmdbId != PilotMovieTmdbId)
         {
             throw new InvalidOperationException(
-                $"One-movie pilot expected exactly one desired movie; got {desired.Count}.");
+                $"One-movie pilot expected TMDB {PilotMovieTmdbId} but selected {item.TmdbId}.");
         }
-
-        var item = desired[0];
         var targetDirectory = item.TargetPath;
 
         if (Directory.Exists(targetDirectory)
