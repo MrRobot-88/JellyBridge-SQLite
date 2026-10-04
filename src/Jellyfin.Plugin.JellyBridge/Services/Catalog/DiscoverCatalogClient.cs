@@ -151,8 +151,10 @@ public sealed class DiscoverCatalogItem
     [JsonPropertyName("popularity")]
     public double? Popularity { get; set; }
 
-    // These fields are part of the JellyBridge-SQLite catalog contract.
-    // They are optional while the UI ARR catalog endpoint is being upgraded.
+    // UI ARR Discover Catalog v0.4.3 metadata contract.
+    [JsonPropertyName("genreIds")]
+    public List<int> GenreIds { get; set; } = new();
+
     [JsonPropertyName("genreNames")]
     public List<string> GenreNames { get; set; } = new();
 
