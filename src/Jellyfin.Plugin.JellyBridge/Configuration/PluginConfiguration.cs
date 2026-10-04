@@ -19,7 +19,7 @@ public class PluginConfiguration : BasePluginConfiguration
         // General
         { nameof(JellyseerrUrl), "http://localhost:5055" },
         { nameof(ApiKey), string.Empty },
-        { nameof(LibraryDirectory), "/data/JellyBridge" },
+        { nameof(LibraryDirectory), "/config/JellyBridge" },
         { nameof(IsEnabled), false },
         { nameof(EnableInMainMenu), true },
         { nameof(SyncIntervalHours), 24.0 },
