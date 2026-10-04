@@ -104,11 +104,16 @@ public sealed class SqlitePilotLibraryService
                 ],
                 EnableRealtimeMonitor = false,
                 SaveLocalMetadata = false,
+                DisabledLocalMetadataReaders = Array.Empty<string>(),
                 TypeOptions =
                 [
                     new TypeOptions
                     {
-                        Type = "Movie"
+                        Type = "Movie",
+                        MetadataFetchers = Array.Empty<string>(),
+                        MetadataFetcherOrder = Array.Empty<string>(),
+                        ImageFetchers = Array.Empty<string>(),
+                        ImageFetcherOrder = Array.Empty<string>()
                     }
                 ]
             };
@@ -174,6 +179,40 @@ public sealed class SqlitePilotLibraryService
             .GetItemById(libraryItemId) as CollectionFolder
             ?? throw new InvalidOperationException(
                 $"Could not resolve '{PilotLibraryName}' as a Jellyfin CollectionFolder.");
+
+        // The Discover libraries already exist on upgraded installations, so
+        // enforce the pilot's local-only provider contract there as well as on
+        // newly-created libraries. Preserve unrelated library options.
+        var libraryOptions = libraryFolder.GetLibraryOptions();
+        libraryOptions.EnableRealtimeMonitor = false;
+        libraryOptions.SaveLocalMetadata = false;
+        libraryOptions.DisabledLocalMetadataReaders = Array.Empty<string>();
+
+        var typeOptions = libraryOptions.TypeOptions?
+            .Where(
+                option => !string.Equals(
+                    option.Type,
+                    "Movie",
+                    StringComparison.OrdinalIgnoreCase))
+            .ToList()
+            ?? new List<TypeOptions>();
+
+        typeOptions.Add(
+            new TypeOptions
+            {
+                Type = "Movie",
+                MetadataFetchers = Array.Empty<string>(),
+                MetadataFetcherOrder = Array.Empty<string>(),
+                ImageFetchers = Array.Empty<string>(),
+                ImageFetcherOrder = Array.Empty<string>()
+            });
+
+        libraryOptions.TypeOptions = typeOptions.ToArray();
+        libraryFolder.UpdateLibraryOptions(libraryOptions);
+
+        _logger.LogInformation(
+            "SQLITE PILOT LIBRARY OPTIONS | Library={Library} | RemoteMetadata=OFF | RemoteImages=OFF | LocalMetadata=ON | RealtimeMonitor=OFF",
+            PilotLibraryName);
 
         var physicalFolders = libraryFolder
             .GetPhysicalFolders()
