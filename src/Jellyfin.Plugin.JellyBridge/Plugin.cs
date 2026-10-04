@@ -20,8 +20,8 @@ namespace Jellyfin.Plugin.JellyBridge
         private readonly ILoggerFactory _loggerFactory;
         private readonly ITaskManager _taskManager;
 
-        public override Guid Id => Guid.Parse("8ecc808c-d6e9-432f-9219-b638fbfb37e6");
-        public override string Name => "JellyBridge";
+        public override Guid Id => Guid.Parse("e0812359-6208-5e5a-a96d-ea43e3c28885");
+        public override string Name => "JellyBridge-SQLite";
 
         public static Plugin? _instance { get; private set; }
 
