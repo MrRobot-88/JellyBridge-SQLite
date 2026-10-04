@@ -33,6 +33,7 @@ namespace Jellyfin.Plugin.JellyBridge.Services
             // UI ARR master catalog remains external/read-only to this plugin.
             serviceCollection.AddHttpClient<DiscoverCatalogClient>();
             serviceCollection.AddTransient<CatalogSelectionService>();
+            serviceCollection.AddTransient<SqliteDryRunService>();
 
             // Register Jellyfin wrapper classes as transient to avoid scope disposal issues
             serviceCollection.AddTransient<JellyfinILibraryManager>(provider =>
