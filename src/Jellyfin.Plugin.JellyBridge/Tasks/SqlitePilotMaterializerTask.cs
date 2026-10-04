@@ -24,7 +24,7 @@ public sealed class SqlitePilotMaterializerTask : IScheduledTask
     public string Name => "JellyBridge-SQLite One Movie Pilot";
     public string Key => "JellyBridgeSQLiteMoviePilot";
     public string Description =>
-        "Materializes exactly one movie using SQLite state, movie.nfo, one compact w342 poster and one placeholder video. Manual-only.";
+        "Materializes Union County (TMDB 1482938) using SQLite state, movie.nfo, one compact w342 poster and one placeholder video. Manual-only.";
     public string Category => "JellyBridge-SQLite";
 
     public async Task ExecuteAsync(
