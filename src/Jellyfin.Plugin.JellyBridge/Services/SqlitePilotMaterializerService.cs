@@ -13,6 +13,7 @@ namespace Jellyfin.Plugin.JellyBridge.Services;
 /// </summary>
 public sealed class SqlitePilotMaterializerService
 {
+    public const long PilotMovieTmdbId = 1482938; // Union County (2026)
     public const long PilotMovieTmdbId = 1482938;
 
     private readonly CatalogSelectionService _selection;
