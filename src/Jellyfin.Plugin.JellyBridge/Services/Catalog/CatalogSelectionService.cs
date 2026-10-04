@@ -59,10 +59,13 @@ public sealed class CatalogSelectionService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var page = await _catalog.GetPageAsync(
+            var page = await _catalog.GetFilteredPageAsync(
                 mediaType,
                 offset,
                 DiscoverCatalogClient.MaximumPageSize,
+                "az",
+                year,
+                letter,
                 cancellationToken).ConfigureAwait(false);
 
             total = page.Total;
@@ -157,6 +160,8 @@ public sealed class CatalogSelectionService
     public async Task<DesiredCatalogItem> GetDesiredByTmdbIdAsync(
         string mediaType,
         long tmdbId,
+        int? year,
+        string? letter,
         CancellationToken cancellationToken = default)
     {
         if (tmdbId <= 0)
@@ -241,11 +246,13 @@ public sealed class CatalogSelectionService
                     item);
 
                 _logger.LogInformation(
-                    "Catalog exact item selected: media={MediaType}, tmdb={TmdbId}, rank={Rank}, title={Title}, scannedThrough={ScannedThrough}, catalogTotal={Total}",
+                    "Catalog exact item selected: media={MediaType}, tmdb={TmdbId}, rank={Rank}, title={Title}, yearFilter={YearFilter}, letterFilter={LetterFilter}, scannedThrough={ScannedThrough}, catalogTotal={Total}",
                     mediaType,
                     tmdbId,
                     item.Rank,
                     item.Title,
+                    year,
+                    letter,
                     offset + page.Items.Count,
                     total);
 
