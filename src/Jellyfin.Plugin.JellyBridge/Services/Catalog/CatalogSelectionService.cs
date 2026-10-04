@@ -59,13 +59,10 @@ public sealed class CatalogSelectionService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var page = await _catalog.GetFilteredPageAsync(
+            var page = await _catalog.GetPageAsync(
                 mediaType,
                 offset,
                 DiscoverCatalogClient.MaximumPageSize,
-                "az",
-                year,
-                letter,
                 cancellationToken).ConfigureAwait(false);
 
             total = page.Total;
@@ -184,10 +181,13 @@ public sealed class CatalogSelectionService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var page = await _catalog.GetPageAsync(
+            var page = await _catalog.GetFilteredPageAsync(
                 mediaType,
                 offset,
                 DiscoverCatalogClient.MaximumPageSize,
+                "az",
+                year,
+                letter,
                 cancellationToken).ConfigureAwait(false);
 
             total = page.Total;
