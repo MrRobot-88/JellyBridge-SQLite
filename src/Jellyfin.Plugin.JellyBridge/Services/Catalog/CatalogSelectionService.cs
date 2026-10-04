@@ -89,6 +89,11 @@ public sealed class CatalogSelectionService
                     continue;
                 }
 
+                if (item.Adult || IsFutureRelease(item.ReleaseDate))
+                {
+                    continue;
+                }
+
                 if (excludeIndia && IsIndian(item))
                 {
                     continue;
@@ -135,6 +140,26 @@ public sealed class CatalogSelectionService
         }
 
         return result;
+    }
+
+    private static bool IsFutureRelease(string releaseDate)
+    {
+        if (string.IsNullOrWhiteSpace(releaseDate))
+        {
+            return false;
+        }
+
+        if (!DateOnly.TryParseExact(
+                releaseDate,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var parsed))
+        {
+            return false;
+        }
+
+        return parsed > DateOnly.FromDateTime(DateTime.UtcNow);
     }
 
     private static bool IsIndian(DiscoverCatalogItem item)
@@ -198,7 +223,8 @@ public sealed class CatalogSelectionService
             item.VoteCount,
             item.GenreNames,
             item.OriginalLanguage,
-            item.OriginCountries
+            item.OriginCountries,
+            item.Adult
         };
 
         var json = JsonSerializer.Serialize(canonical);
