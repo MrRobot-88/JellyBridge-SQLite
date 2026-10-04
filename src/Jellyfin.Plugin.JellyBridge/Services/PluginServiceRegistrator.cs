@@ -35,6 +35,7 @@ namespace Jellyfin.Plugin.JellyBridge.Services
             serviceCollection.AddHttpClient<DiscoverPosterService>();
             serviceCollection.AddTransient<CatalogSelectionService>();
             serviceCollection.AddTransient<SqliteDryRunService>();
+            serviceCollection.AddTransient<SqlitePilotMaterializerService>();
 
             // Register Jellyfin wrapper classes as transient to avoid scope disposal issues
             serviceCollection.AddTransient<JellyfinILibraryManager>(provider =>
