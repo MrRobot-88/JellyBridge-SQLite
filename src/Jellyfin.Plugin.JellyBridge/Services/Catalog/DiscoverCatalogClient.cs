@@ -161,4 +161,7 @@ public sealed class DiscoverCatalogItem
 
     [JsonPropertyName("originCountries")]
     public List<string> OriginCountries { get; set; } = new();
+
+    [JsonPropertyName("adult")]
+    public bool Adult { get; set; }
 }
