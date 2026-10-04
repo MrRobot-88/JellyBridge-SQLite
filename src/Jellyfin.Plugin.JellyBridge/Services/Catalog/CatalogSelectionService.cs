@@ -259,6 +259,113 @@ public sealed class CatalogSelectionService
             $"TMDB {tmdbId} was not found in the Discover Catalog {mediaType} feed.");
     }
 
+    /// <summary>
+    /// Resolves one exact catalog item by TMDB id while applying the same
+    /// eligibility rules as the ranked working-set selector. Intended for
+    /// controlled/manual pilots, not bulk synchronization.
+    /// </summary>
+    public async Task<DesiredCatalogItem> GetDesiredByTmdbIdAsync(
+        string mediaType,
+        long tmdbId,
+        CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tmdbId));
+        }
+
+        var minimumYear = Plugin.GetConfigOrDefault<int>(
+            nameof(PluginConfiguration.DiscoverMinimumYear));
+
+        var excludeIndia = Plugin.GetConfigOrDefault<bool>(
+            nameof(PluginConfiguration.DiscoverExcludeIndia));
+
+        var offset = 0;
+        var total = int.MaxValue;
+
+        while (offset < total)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var page = await _catalog.GetPageAsync(
+                mediaType,
+                offset,
+                DiscoverCatalogClient.MaximumPageSize,
+                cancellationToken).ConfigureAwait(false);
+
+            total = page.Total;
+
+            if (page.Items.Count == 0)
+            {
+                break;
+            }
+
+            var item = page.Items.FirstOrDefault(
+                candidate => candidate.TmdbId == tmdbId);
+
+            if (item is not null)
+            {
+                if (!item.Year.HasValue || item.Year.Value < minimumYear)
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} is outside the configured minimum year.");
+                }
+
+                if (string.IsNullOrWhiteSpace(item.PosterPath))
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} has no posterPath.");
+                }
+
+                if (item.Adult)
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} is marked adult and is not eligible.");
+                }
+
+                if (IsFutureRelease(item.ReleaseDate))
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} has a future release date {item.ReleaseDate}.");
+                }
+
+                if (excludeIndia && IsIndian(item))
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} is excluded by the India filter.");
+                }
+
+                var normalizedMediaType =
+                    string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(mediaType, "series", StringComparison.OrdinalIgnoreCase)
+                        ? "tv"
+                        : "movie";
+
+                var desired = new DesiredCatalogItem(
+                    normalizedMediaType,
+                    item.TmdbId,
+                    BuildTargetPath(normalizedMediaType, item),
+                    BuildFingerprint(normalizedMediaType, item),
+                    item);
+
+                _logger.LogInformation(
+                    "Exact catalog item selected: media={MediaType}, tmdb={TmdbId}, rank={Rank}, title={Title}, scannedThroughOffset={Offset}",
+                    normalizedMediaType,
+                    item.TmdbId,
+                    item.Rank,
+                    item.Title,
+                    offset);
+
+                return desired;
+            }
+
+            offset += page.Items.Count;
+        }
+
+        throw new InvalidOperationException(
+            $"TMDB {tmdbId} was not found in the Discover Catalog.");
+    }
+
     private static bool IsFutureRelease(string releaseDate)
     {
         if (string.IsNullOrWhiteSpace(releaseDate))
