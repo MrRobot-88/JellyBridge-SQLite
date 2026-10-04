@@ -87,6 +87,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
   </ItemGroup>
 
   <!-- Microsoft.Extensions packages for .NET 9.0 -->
@@ -96,6 +97,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.11" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.11" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.11" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.11" />
   </ItemGroup>
 
   <!-- Microsoft.Extensions packages for .NET 10.0 -->
@@ -105,6 +107,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
   </ItemGroup>
 
   <!-- Common package references -->
