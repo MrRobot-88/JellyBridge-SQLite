@@ -4,6 +4,7 @@ using Jellyfin.Plugin.JellyBridge.Controllers;
 using Jellyfin.Plugin.JellyBridge.Configuration;
 using Jellyfin.Plugin.JellyBridge.Tasks;
 using Jellyfin.Plugin.JellyBridge.Services;
+using Jellyfin.Plugin.JellyBridge.Services.Sqlite;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Jellyfin.Plugin.JellyBridge.JellyfinModels;
@@ -37,6 +38,11 @@ namespace Jellyfin.Plugin.JellyBridge.Services
                 new JellyfinIUserManager(provider.GetRequiredService<MediaBrowser.Controller.Library.IUserManager>()));
             serviceCollection.AddTransient<JellyfinIProviderManager>(provider =>
                 new JellyfinIProviderManager(provider.GetRequiredService<MediaBrowser.Controller.Providers.IProviderManager>()));
+
+            // SQLite-first core state. These services are stateless apart from their
+            // connection-per-operation access to the local jellybridge.db.
+            serviceCollection.AddSingleton<BridgeStateStore>();
+            serviceCollection.AddSingleton<SyncPlanner>();
 
             // Register the base services as transient to avoid scope disposal issues in 10.11.5+
             serviceCollection.AddTransient<SyncService>();
