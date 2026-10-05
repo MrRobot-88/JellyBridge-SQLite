@@ -42,8 +42,8 @@ public class FavoriteService
         _logger.LogDebug("Retrieved favorites for {UserCount} users", allFavoritesDict.Count);
         foreach (var (user, favorites) in allFavoritesDict)
         {
-            _logger.LogTrace("User '{UserName}' has {FavoriteCount} favorites: {FavoriteNames}", 
-                user.Username, favorites.Count, 
+            _logger.LogTrace("User '{UserName}' has {FavoriteCount} favorites: {FavoriteNames}",
+                user.Username, favorites.Count,
                 string.Join(", ", favorites.Select(f => f.Name)));
         }
 
@@ -74,7 +74,6 @@ public class FavoriteService
     public async Task<(List<(IJellyfinItem item, JellyseerrMediaRequest request)> processed, List<IJellyfinItem> blocked)> RequestFavorites(
         List<(JellyseerrUser user, IJellyfinItem item)> favoritesWithUser)
     {
-        var userPermissionRequest4k = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.UserPermissionRequest4k));
         var requestResults = new List<(IJellyfinItem item, JellyseerrMediaRequest request)>();
         var blockedItems = new List<IJellyfinItem>();
         var successfullyProcessedItems = new HashSet<Guid>(); // Track items that have been successfully requested
@@ -106,44 +105,48 @@ public class FavoriteService
                 _logger.LogError("Skipping item {ItemName} - no TMDB ID found", item.Name);
                 continue;
             }
-            
+
             var username = user.JellyfinUsername ?? user.Username ?? "ID " + user.Id.ToString();
             var mediaType = IJellyseerrItem.GetMediaType(item).ToString().ToLower();
-            var mediaPermission4k = IJellyseerrItem.GetMediaPermission4k(item);
 
             try
             {
+                var requestIs4k = FolderUtils.IsPathIn4kSyncDirectory(item.Path);
+
                 var requestParams = new Dictionary<string, object>
                 {
                     ["mediaType"] = mediaType,
                     ["mediaId"] = tmdbId.Value,
                     ["userId"] = user.Id,
+                    ["is4k"] = requestIs4k,
                 };
 
-                if(userPermissionRequest4k)
-                {
-                    requestParams["is4k"] = PermissionHelper.HasPermission(mediaPermission4k, user?.Permissions ?? 0);
-                }
-                
-                _logger.LogTrace("Processing Jellyseerr bridge item: {ItemName} (TMDB ID: {TmdbId}) for user {UserName}", 
+                _logger.LogInformation(
+                    "JellyBridge favorite request quality routed from path: Media={MediaType}, TMDB={TmdbId}, Is4k={Is4k}, Path={Path}",
+                    mediaType,
+                    tmdbId.Value,
+                    requestIs4k,
+                    item.Path);
+
+                _logger.LogTrace("Processing Jellyseerr bridge item: {ItemName} (TMDB ID: {TmdbId}) for user {UserName}",
                     item.Name, tmdbId.Value, username);
-                
+
                 var requestResult = await _apiService.CallEndpointAsync(JellyseerrEndpoint.CreateRequest, parameters: requestParams);
                 var request = requestResult as JellyseerrMediaRequest;
-                
+
                 // Check if request is valid by verifying it has an ID (successful requests always have an ID > 0)
                 if (request != null && request.Id != 0)
                 {
                     // Only mark as successfully processed after receiving a valid response
                     successfullyProcessedItems.Add(item.Id);
                     requestResults.Add((item, request));
-                    _logger.LogTrace("Successfully created request for {ItemName} on behalf of {UserName}", 
+                    _logger.LogTrace("Successfully created request for {ItemName} on behalf of {UserName}",
                         item.Name, username);
                 }
                 else
                 {
                     // API returned error/default object (e.g., quota exceeded, forbidden, etc.)
-                    _logger.LogWarning("Failed to create request for {ItemName} on behalf of {UserName} - no valid response from Jellyseerr", 
+                    _logger.LogWarning("Failed to create request for {ItemName} on behalf of {UserName} - no valid response from Jellyseerr",
                         item.Name, username);
                     blockedItems.Add(item);
                 }
@@ -151,13 +154,13 @@ public class FavoriteService
             catch (Exception ex)
             {
                 // If request creation fails (e.g., network error, quota exceeded exception), log and continue
-                _logger.LogWarning(ex, "Failed to create request for {ItemName} on behalf of {UserName}", 
+                _logger.LogWarning(ex, "Failed to create request for {ItemName} on behalf of {UserName}",
                     item.Name, user.JellyfinUsername ?? user.Username ?? "Unknown");
                 // Add to blocked items so they appear in the frontend
                 blockedItems.Add(item);
             }
         }
-        
+
         if (requestResults.Count == 0)
         {
             _logger.LogDebug("No favorited Jellyseerr bridge items found or successfully requested");
@@ -166,7 +169,7 @@ public class FavoriteService
         {
             _logger.LogDebug("Successfully created {FavoritedCount} requests for favorited Jellyseerr bridge items", requestResults.Count);
         }
-        
+
         return (requestResults, blockedItems);
     }
 
@@ -179,27 +182,27 @@ public class FavoriteService
     /// These are items that exist only in the Jellyseerr bridge folder (not in main Jellyfin library).
     /// </summary>
     public List<(JellyseerrUser user, IJellyfinItem item)> EnsureJellyseerrUser(
-        List<(JellyfinUser user, IJellyfinItem item)> allFavorites, 
+        List<(JellyfinUser user, IJellyfinItem item)> allFavorites,
         List<JellyseerrUser> jellyseerrUsers)
     {
         var favoritesWithJellyseerrUser = new List<(JellyseerrUser user, IJellyfinItem item)>();
-        
+
         // Create a lookup hashtable for Jellyseerr users by their Jellyfin user ID for quick access
         // Note: GetJellyseerrUsersAsync already filters duplicates, so we can safely create the dictionary
         var jellyseerrUserLookup = jellyseerrUsers
             .Where(u => !string.IsNullOrEmpty(u.JellyfinUserGuid))
             .ToDictionary(u => u.JellyfinUserGuid!, u => u);
-        
-        _logger.LogTrace("Jellyseerr user lookup created with {Count} users: {UserLookup}", 
-            jellyseerrUserLookup.Count, 
+
+        _logger.LogTrace("Jellyseerr user lookup created with {Count} users: {UserLookup}",
+            jellyseerrUserLookup.Count,
             string.Join(", ", jellyseerrUserLookup.Select(kvp => $"{kvp.Key}->{kvp.Value.JellyfinUsername}")));
-        
+
         // Loop through all favorites (flat tuple list: each is (user, item)); do not filter by users or dedupe items
         foreach (var (jellyfinUser, favoriteItem) in allFavorites)
         {
             if (!jellyseerrUserLookup.TryGetValue(jellyfinUser.Id.ToString(), out var jellyseerrUser))
             {
-                _logger.LogWarning("Jellyfin user '{JellyfinUsername}' (ID: {JellyfinUserId}) does not have a corresponding Jellyseerr account - skipping favorite", 
+                _logger.LogWarning("Jellyfin user '{JellyfinUsername}' (ID: {JellyfinUserId}) does not have a corresponding Jellyseerr account - skipping favorite",
                     jellyfinUser.Username, jellyfinUser.Id);
                 continue;
             }
@@ -225,24 +228,24 @@ public class FavoriteService
             if (usersResult is List<JellyseerrUser> users)
             {
                 _logger.LogDebug("Fetched {UserCount} users from Jellyseerr", users.Count);
-                
+
                 // Filter out duplicate JellyfinUserGuid values, keeping only the first occurrence
                 var uniqueUsers = users
                     .Where(u => !string.IsNullOrEmpty(u.JellyfinUserGuid))
                     .GroupBy(u => u.JellyfinUserGuid!)
-                    .Select(g => 
+                    .Select(g =>
                     {
                         if (g.Count() > 1)
                         {
                             _logger.LogWarning("Found {Count} Jellyseerr users with duplicate JellyfinUserGuid '{Guid}': {Usernames}. Using the first one.",
-                                g.Count(), 
+                                g.Count(),
                                 g.Key,
                                 string.Join(", ", g.Select(u => u.JellyfinUsername)));
                         }
                         return g.First();
                     })
                     .ToList();
-                
+
                 _logger.LogDebug("Filtered to {UniqueCount} unique users with JellyfinUserGuid", uniqueUsers.Count);
                 return uniqueUsers;
             }
@@ -363,7 +366,7 @@ public async Task<(List<IJellyseerrItem> newIgnored, List<IJellyseerrItem> clear
             // Create ignore files for all matched Jellyfin items (always done, regardless of RemoveRequestedFromFavorites setting)
 			var (newIgnoredMatches, existingIgnored) = await _bridgeService.IgnoreMatchAsync(matches);
 			newIgnored.AddRange(newIgnoredMatches);
-			_logger.LogTrace("Created/updated ignore files for matched items ({NewlyIgnored} newly ignored, {ExistingIgnored} already ignored)", 
+			_logger.LogTrace("Created/updated ignore files for matched items ({NewlyIgnored} newly ignored, {ExistingIgnored} already ignored)",
                 newIgnoredMatches.Count, existingIgnored.Count);
 
             // Collect tasks for unfavoriting and marking as unplayed
@@ -374,11 +377,11 @@ public async Task<(List<IJellyseerrItem> newIgnored, List<IJellyseerrItem> clear
             {
                 var jfItem = match.JellyfinItem;
                 var itemPath = jfItem.Path;
-                
+
                 // Check if item should be unfavorited: in bridge folder OR not in any folder
                 var isInBridgeFolder = !string.IsNullOrEmpty(itemPath) && FolderUtils.IsPathInSyncDirectory(itemPath);
                 var isNotInAnyFolder = string.IsNullOrEmpty(itemPath);
-                
+
                 // Only unfavorite items that are in bridge folder or have no path
                 if (!isInBridgeFolder && !isNotInAnyFolder)
                 {
@@ -419,7 +422,7 @@ public async Task<(List<IJellyseerrItem> newIgnored, List<IJellyseerrItem> clear
             // Await all tasks at once
             try
             {
-                var allTasks = unfavoriteTasks.SelectMany(t => 
+                var allTasks = unfavoriteTasks.SelectMany(t =>
                 {
                     if (t.favoriteTask != null)
                     {
@@ -451,41 +454,41 @@ public async Task<(List<IJellyseerrItem> newIgnored, List<IJellyseerrItem> clear
                             var favoriteUpdated = favoriteTask.Result;
                             if (favoriteUpdated)
                             {
-                                _logger.LogTrace("Unfavorited '{ItemName}' for user '{UserName}'", 
+                                _logger.LogTrace("Unfavorited '{ItemName}' for user '{UserName}'",
                                     item.Name, user.Username);
                                 cleared.Add(jellyseerrItem);
                             }
                             else
                             {
-                                _logger.LogTrace("Favorite was not updated for '{ItemName}' for user '{UserName}' (may already be unfavorited)", 
+                                _logger.LogTrace("Favorite was not updated for '{ItemName}' for user '{UserName}' (may already be unfavorited)",
                                     item.Name, user.Username);
                             }
                         }
                         else
                         {
-                            _logger.LogWarning(favoriteTask.Exception?.GetBaseException() ?? new Exception("Task was canceled"), 
+                            _logger.LogWarning(favoriteTask.Exception?.GetBaseException() ?? new Exception("Task was canceled"),
                                 favoriteTask.Exception?.GetBaseException()?.Message ?? "Task was canceled");
                         }
                     }
-                    
+
                     // Check play status task status
                     if (!playStatusTask.IsFaulted && !playStatusTask.IsCanceled)
                     {
                         var playStatusResult = playStatusTask.Result;
                         if (playStatusResult.Success)
                         {
-                            _logger.LogTrace("Marked '{ItemName}' as unplayed for user '{UserName}'", 
+                            _logger.LogTrace("Marked '{ItemName}' as unplayed for user '{UserName}'",
                                 item.Name, user.Username);
                         }
                         else
                         {
-                            _logger.LogTrace("Play status was not updated for '{ItemName}' for user '{UserName}' (may already be unplayed): {Message}", 
+                            _logger.LogTrace("Play status was not updated for '{ItemName}' for user '{UserName}' (may already be unplayed): {Message}",
                                 item.Name, user.Username, playStatusResult.Message);
                         }
                     }
                     else
                     {
-                        _logger.LogWarning(playStatusTask.Exception?.GetBaseException() ?? new Exception("Task was canceled"), 
+                        _logger.LogWarning(playStatusTask.Exception?.GetBaseException() ?? new Exception("Task was canceled"),
                             playStatusTask.Exception?.GetBaseException()?.Message ?? "Task was canceled");
                     }
                 }
@@ -499,7 +502,7 @@ public async Task<(List<IJellyseerrItem> newIgnored, List<IJellyseerrItem> clear
         {
             _logger.LogError(ex, "Failed processing favorited items");
         }
-		
+
         return (newIgnored, cleared);
     }
 

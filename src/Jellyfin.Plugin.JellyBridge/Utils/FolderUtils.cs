@@ -114,6 +114,16 @@ public static class FolderUtils
         var syncDirectory = GetBaseDirectory();
         return IsPathInDirectory(pathToCheck, syncDirectory);
     }
+    /// <summary>
+    /// Returns true only for items materialized inside the dedicated 4K Discover roots.
+    /// Normal Discover items must never inherit 4K quality from user permissions.
+    /// </summary>
+    public static bool IsPathIn4kSyncDirectory(string? pathToCheck)
+    {
+        var baseDirectory = GetBaseDirectory();
+        return IsPathInDirectory(pathToCheck, Path.Combine(baseDirectory, "Movies 4K"))
+            || IsPathInDirectory(pathToCheck, Path.Combine(baseDirectory, "Shows 4K"));
+    }
 
     /// <summary>
     /// Sanitize filename by removing invalid characters.
@@ -178,7 +188,7 @@ public static class FolderUtils
         {
             var category = char.GetUnicodeCategory(ch);
             // Skip invisible characters and private use characters that could cause display issues
-            if (category == System.Globalization.UnicodeCategory.PrivateUse || 
+            if (category == System.Globalization.UnicodeCategory.PrivateUse ||
                 category == System.Globalization.UnicodeCategory.Control ||
                 (ch >= 0x200B && ch <= 0x200D) || // Zero-width space, zero-width non-joiner, zero-width joiner
                 (ch >= 0xFEFF && ch <= 0xFEFF))  // Zero-width no-break space
@@ -186,7 +196,7 @@ public static class FolderUtils
                 // Skip these invisible characters completely
                 continue;
             }
-            
+
             // Replace invalid characters with underscore
             if (invalidChars.Contains(ch))
             {
@@ -256,7 +266,7 @@ public static class FolderUtils
 
                 // Read test file
                 var readContent = File.ReadAllText(testFilePath);
-                
+
                 if (readContent != testContent)
                 {
                     return (false, $"Test file content mismatch. Expected: {testContent}, Got: {readContent}");
@@ -264,7 +274,7 @@ public static class FolderUtils
 
                 // Delete test file
                 File.Delete(testFilePath);
-                
+
                 return (true, "Directory read/write test successful");
             }
             finally
