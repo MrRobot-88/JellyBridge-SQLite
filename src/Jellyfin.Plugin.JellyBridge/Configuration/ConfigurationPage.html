@@ -515,25 +515,25 @@
                     
 
                     <div class="inputContainer">
-                        <input is="emby-input" type="url" id="JellyseerrUrl" label="Jellyseerr URL" autocomplete="one-time-code" data-form-type="other" />
-                        <div class="fieldDescription">The base URL of your Jellyseerr instance. For docker instances, use http://host.docker.internal:5055</div>
+                        <input is="emby-input" type="url" id="JellyseerrUrl" label="Seerr / Jellyseerr URL (requests only)" autocomplete="one-time-code" data-form-type="other" />
+                        <div class="fieldDescription">Optional for SQLite Discover browsing. Required only for favorite → request integration with Seerr/Jellyseerr. Enter the URL reachable from the Jellyfin container.</div>
                     </div>
 
                     <div class="inputContainer">
-                        <input is="emby-input" type="password" id="ApiKey" label="API Key" autocomplete="one-time-code" data-1p-ignore data-bwignore data-lpignore="true" data-form-type="other" />
-                        <div class="fieldDescription">Your Jellyseerr API key, usually accessible from <a target="_blank" href="http://localhost:5055/settings">localhost on port 5055</a>.</div>
+                        <input is="emby-input" type="password" id="ApiKey" label="API Key (requests only)" autocomplete="one-time-code" data-1p-ignore data-bwignore data-lpignore="true" data-form-type="other" />
+                        <div class="fieldDescription">Optional for SQLite Discover browsing. Required for favorite → request integration. The key is stored in the plugin configuration and is not needed to populate Discover Movies or Discover Series.</div>
                     </div>
 
                     <div class="inputContainer file-browser" id="LibraryDirectoryContainer">
                         <input is="emby-input" type="text" id="LibraryDirectory" label="Library Directory" />
                         <button type="button" id="browseLibraryDirectory" is="emby-button">📂</button>
-                        <div class="fieldDescription">Directory path for Jellyseerr library files. Ensure that this path is used only for the JellyBridge library. The <span class="link" data-target-page="ManageJellyBridgeLibraryContainer">Automated Library Refresh</span> option will refresh any Jellyfin libraries using this folder.</div>
+                        <div class="fieldDescription">SQLite-first materialization root. Discover Movies and Discover Series use the Movies and Shows folders below this directory. The default Docker path is /config/JellyBridge.</div>
                     </div>
 
                     <div class="checkboxContainer">
                         <label class="emby-checkbox-label" id="IsEnabledContainer">
                             <input id="IsEnabled" type="checkbox" is="emby-checkbox" data-embycheckbox="true" class="emby-checkbox" />
-                            <span class="checkboxLabel">Enable the Automated Task to Sync Jellyseerr and Jellyfin</span>
+                            <span class="checkboxLabel">Enable JellyBridge SQLite Discover Sync</span>
                             <span class="checkboxOutline">
                                 <span class="material-icons checkboxIcon checkboxIcon-checked check" aria-hidden="true"></span>
                                 <span class="material-icons checkboxIcon checkboxIcon-unchecked" aria-hidden="true"></span>
@@ -547,7 +547,7 @@
 
                     <div class="inputContainer" id="SyncIntervalHoursContainer" data-depends-on="IsEnabled">
                         <input is="emby-input" type="number" id="SyncIntervalHours" label="Sync Interval (hours)" min="0" max="168" step="0.1"/>
-                        <div class="fieldDescription">Defines how often to run the scheduled sync task, allowing partial hours, e.g., 1.5. Set to 0 to disable automatic syncing. <i>Note: Jellyfin delays scheduled tasks for exactly one hour after first-time install and some version upgrades of the plugin.</i></div>
+                        <div class="fieldDescription">Defines how often JellyBridge SQLite refreshes the Discover catalog selection. Set to 0 to disable automatic scheduled syncing; manual sync remains available.</div>
                     </div>
 
                     <details id="librarySetupInstructions" class="setupInstructions verticalSection" style="display: none;">
@@ -727,13 +727,39 @@
                     <br>
 
                     <details id="syncSettings">
-                        <summary>Import Discover Content</summary>
+                        <summary>SQLite Discover Catalog</summary>
                         <br>
                         <div class="fieldDescription" style="margin-bottom: 16px;">
-                            Configure how content is discovered and imported from Jellyseerr. Select which geographic region and networks to pull content from, control how much content is fetched, and set retention policies for discovered items.
+                            Configure the SQLite-backed Discover working set. Catalog selection is independent of Seerr/Jellyseerr; Seerr is used only for favorite → request integration.
                         </div>
 
-                        <div class="inputContainer" id="regionContainer">
+                        <div class="inputContainer">
+                            <input id="DiscoverMovieTargetCount" type="number" is="emby-input" min="0" max="50000" label="Discover Movies target"/>
+                            <div class="fieldDescription">Desired number of movies materialized from the SQLite catalog. Use a small value while testing; scale up in controlled stages.</div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <input id="DiscoverSeriesTargetCount" type="number" is="emby-input" min="0" max="50000" label="Discover Series target"/>
+                            <div class="fieldDescription">Desired number of series materialized from the SQLite catalog.</div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <input id="DiscoverMinimumYear" type="number" is="emby-input" min="1900" max="2100" label="Minimum year"/>
+                            <div class="fieldDescription">Catalog selection policy. Titles older than this year are excluded from the Discover working set.</div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input id="DiscoverExcludeIndia" type="checkbox" is="emby-checkbox" data-embycheckbox="true" class="emby-checkbox" />
+                                <span class="checkboxLabel">Exclude India / Indian-language catalog titles</span>
+                                <span class="checkboxOutline">
+                                    <span class="material-icons checkboxIcon checkboxIcon-checked check" aria-hidden="true"></span>
+                                    <span class="material-icons checkboxIcon checkboxIcon-unchecked" aria-hidden="true"></span>
+                                </span>
+                            </label>
+                            <div class="fieldDescription">Applies only when the SQLite catalog metadata identifies the title as matching this exclusion policy.</div>
+                        </div>
+                        <div class="inputContainer" id="regionContainer" style="display: none;">
                             <div style="display: flex; align-items: center; gap: 10px;">
                                 <div style="flex: 1;">
                                     <label class="inputLabel inputLabelUnfocused" for="selectWatchRegion">Watch Region <span class="helpIcon" title="Click the refresh button to load all watch regions from Jellyseerr.">?</span></label>
@@ -748,7 +774,7 @@
                             <div class="fieldDescription">Select your watch region for networks. Click <span class="link" data-target-page="refreshWatchRegions">🔄</span> to load watch regions from Jellyseerr. This determines which watch providers are displayed for movies and series in the available networks list.</div>
                         </div>
 
-                        <div id="networkServicesContainer" class="inputContainer">
+                        <div id="networkServicesContainer" class="inputContainer" style="display: none;">
                             <label class="inputLabel inputLabelUnfocused" for="availableNetworks">Network Services</label>
                             <div class="fieldDescription">
                                 Displayed below as: Jellyseerr sort order #. Network Name (Network ID #), and [REGION ID]
@@ -794,19 +820,19 @@
                             </div>
                         </div>
 
-                        <div class="inputContainer" id="MaxDiscoverPagesContainer">
+                        <div class="inputContainer" id="MaxDiscoverPagesContainer" style="display: none;">
                             <input id="MaxDiscoverPages" type="number" is="emby-input" min="0" label="Discover Pages"/>
                             <div class="fieldDescription">Maximum number of pages to import from the Jellyseerr discover pages for each network. Each page consists of 20 series for each network. This applies to both movies and series discovery. Enter 0 to retrieve ALL pages (try a smaller number first).</div>
                         </div>
 
-                        <div class="inputContainer">
+                        <div class="inputContainer" style="display: none;">
                             <input id="MaxRetentionDays" type="number" is="emby-input" min="1" label="Content Retention Time (days)"/>
                             <div class="fieldDescription">Maximum number of days to retain items in the collection before cleanup. JellyBridge items older than this will be removed after running the import task.</div>
                         </div>
 
                         <div>
                             <button is="emby-button" type="button" id="syncDiscover" class="raised button block emby-button">
-                                <span>📥 Import Discover Content from Jellyseerr</span>
+                                <span>🗃️ Sync SQLite Discover Now</span>
                             </button>
                             <div id="syncDiscoverResult" class="testResult emby-textarea"></div>
                         </div>
@@ -975,13 +1001,15 @@
                         <div class="fieldDescription">
                             Control the sort order of items in the JellyBridge library by setting a generated play count and last played date of media items for all users. This allows users to see content in a different order after each refresh.</i>
                         </div>
+                        <div class="fieldDescription" style="margin-bottom: 16px;"><strong>SQLite-first:</strong> automatic Sort scheduling has been removed. Manual sorting below remains available.</div>
+
                         <div class="fieldDescription cautionText" style="margin-bottom: 16px;">
                             ✳️ Instructions: To enable this feature, each user must open the JellyBridge library and change the default sort option <i>Sort by Folder</i> to <i>Sort by <strong>Play count</strong> (Sort order <strong>Ascending</strong>)</i>. For Android TV users, sort by <i><strong>Last Played</strong></i>.
                             <br>
                             ⚠️ Caution: Recommended to disable sorting for Kodi integration, which has native support for random or recommended sorting. The sorting feature will trigger many updates in the Kodi Add-on, although they finish relatively quickly.
                         </div>
 
-                        <div id="EnableAutomatedSortTaskContainer" class="checkboxContainer checkboxContainer-withDescription">
+                        <div id="EnableAutomatedSortTaskContainer" class="checkboxContainer checkboxContainer-withDescription" style="display: none;">
                             <label class="emby-checkbox-label">
                                 <input id="EnableAutomatedSortTask" type="checkbox" is="emby-checkbox" data-embycheckbox="true" class="emby-checkbox" />
                                 <span class="checkboxLabel">Enable the Automated Task to Sort Discover Content</span>
@@ -993,7 +1021,7 @@
                             <div class="fieldDescription">Enables the automated scheduled task that periodically updates play counts to sort JellyBridge library content.</div>
                         </div>
 
-                        <div class="inputContainer" id="SortTaskIntervalHoursContainer" data-depends-on="EnableAutomatedSortTask">
+                        <div class="inputContainer" id="SortTaskIntervalHoursContainer" data-depends-on="EnableAutomatedSortTask" style="display: none;">
                             <input is="emby-input" type="number" id="SortTaskIntervalHours" label="Sort Task Interval (hours)" min="0" max="168" step="0.1"/>
                             <div class="fieldDescription">Defines how often to run the sort task, allowing partial hours, e.g., 1.5. Set to 0 to disable automatic sort randomization. <i>Note: Jellyfin delays scheduled tasks for exactly one hour after first-time install and some version upgrades of the plugin.</i></div>
                         </div>
@@ -1045,10 +1073,10 @@
                         <summary>Advanced</summary>
                         <br>
                         <div class="fieldDescription" style="margin-bottom: 16px;">
-                            Configure advanced options including startup behavior, timeout settings, and logging levels. Use these settings to fine-tune plugin behavior and troubleshoot issues. The <span class="link" data-target-page="cleanupMetadata">🧹 Cleanup Metadata</span> button will remove folders that are missing metadata or have out-dated metadata in the JellyBridge library.
+                            Configure timeout settings and logging levels. The SQLite-first build uses one JellyBridge scheduled task; the legacy startup task has been removed. The <span class="link" data-target-page="cleanupMetadata">🧹 Cleanup Metadata</span> button will remove folders that are missing metadata or have out-dated metadata in the JellyBridge library.
                         </div>
 
-                        <div class="checkboxContainer checkboxContainer-withDescription">
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="display: none;">
                             <label class="emby-checkbox-label">
                                 <input id="EnableStartupSync" type="checkbox" is="emby-checkbox" data-embycheckbox="true" class="emby-checkbox" />
                                 <span class="checkboxLabel">Run Automated Tasks on Plugin Startup</span>
@@ -1060,7 +1088,7 @@
                             <div id="enableStartupSyncDescription" class="fieldDescription">Automatically run all enabled automated tasks when the plugin starts up or when Jellyfin restarts.</div>
                         </div>
 
-                        <div class="inputContainer" id="StartupDelaySecondsContainer" data-depends-on="EnableStartupSync">
+                        <div class="inputContainer" id="StartupDelaySecondsContainer" data-depends-on="EnableStartupSync" style="display: none;">
                             <input id="StartupDelaySeconds" type="number" is="emby-input" min="0" max="900" label="Startup Delay (seconds)"/>
                             <div class="fieldDescription">Delay a number of seconds before running the auto-sync task on startup, in addition to the 1-minute default delay for startup tasks. Useful when Jellyfin takes more than 1 minute to start, which you can check in the logs: <i>Main: Startup complete</i></div>
                         </div>

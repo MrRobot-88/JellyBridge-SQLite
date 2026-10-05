@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyBridge.Tasks;
 /// <summary>
 /// Startup task for running enabled automated tasks with delay.
 /// </summary>
-public class StartupTask : IScheduledTask
+public class StartupTask
 {
     private readonly DebugLogger<StartupTask> _logger;
     private readonly IServiceScopeFactory _scopeFactory;

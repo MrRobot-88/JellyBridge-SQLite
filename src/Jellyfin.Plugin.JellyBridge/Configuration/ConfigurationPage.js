@@ -700,7 +700,13 @@ function initializeImportContent(page) {
         });
     }
     
-    // Set Max Discover Pages and Max Retention Days
+    // SQLite-first Discover selection settings
+    setInputField(page, 'DiscoverMovieTargetCount');
+    setInputField(page, 'DiscoverSeriesTargetCount');
+    setInputField(page, 'DiscoverMinimumYear');
+    setInputField(page, 'DiscoverExcludeIndia', true);
+
+    // Legacy Jellyseerr discover fields remain hidden for compatibility
     setInputField(page, 'MaxDiscoverPages');
     setInputField(page, 'MaxRetentionDays');
 
@@ -785,7 +791,17 @@ function performSyncImportContent(page) {
                     contentType: 'application/json',
                     dataType: 'json'
                 }).then(function(syncData) {
-                    appendToResultBox(syncDiscoverResult, '\n' + (syncData.result || 'No result available'));
+                    const summary = [
+                        syncData.message || 'SQLite-first Discover synchronization completed.',
+                        `Movies: ${syncData.desiredMovies ?? '?'}`,
+                        `Series: ${syncData.desiredSeries ?? '?'}`,
+                        `Add: ${syncData.add ?? '?'}`,
+                        `Update: ${syncData.update ?? '?'}`,
+                        `Remove: ${syncData.remove ?? '?'}`,
+                        `Unchanged: ${syncData.unchanged ?? '?'}`,
+                        `Time: ${syncData.totalMilliseconds ?? '?'} ms`
+                    ].join('\n');
+                    appendToResultBox(syncDiscoverResult, '\n' + summary);
                     scrollToElement('syncDiscoverResult');
                 }).catch(function(error) {
                     DisplayMessage('❌ Sync failed: ' + (error?.message || 'Unknown error'));
@@ -1495,6 +1511,10 @@ function performPluginReset(page) {
                 SyncIntervalHours: null,
                 RequestTimeout: null,
                 RetryAttempts: null,
+                DiscoverMovieTargetCount: null,
+                DiscoverSeriesTargetCount: null,
+                DiscoverMinimumYear: null,
+                DiscoverExcludeIndia: null,
                 MaxDiscoverPages: null,
                 MaxRetentionDays: null,
                 ExcludeFromMainLibraries: null,
@@ -1635,6 +1655,9 @@ function savePluginConfiguration(page) {
         if (!validateField(page, 'SortTaskIntervalHours', validators.double, 'Sort Task Interval must be a positive decimal number').isValid) return;
         if (!validateField(page, 'RequestTimeout', validators.int, 'Request Timeout must be a positive integer').isValid) return;
         if (!validateField(page, 'RetryAttempts', validators.int, 'Retry Attempts must be a positive integer').isValid) return;
+        if (!validateField(page, 'DiscoverMovieTargetCount', validators.int, 'Discover Movies target must be a positive integer').isValid) return;
+        if (!validateField(page, 'DiscoverSeriesTargetCount', validators.int, 'Discover Series target must be a positive integer').isValid) return;
+        if (!validateField(page, 'DiscoverMinimumYear', validators.int, 'Minimum year must be an integer').isValid) return;
         if (!validateField(page, 'MaxDiscoverPages', validators.int, 'Max Discover Pages must be a positive integer').isValid) return;
         if (!validateField(page, 'MaxRetentionDays', validators.int, 'Max Retention Days must be a positive integer').isValid) return;
         if (!validateField(page, 'StartupDelaySeconds', validators.int, 'Startup Delay must be a positive integer').isValid) return;
@@ -1659,6 +1682,10 @@ function savePluginConfiguration(page) {
     form.NetworkMap = parseNetworkOptions(page.querySelector('#activeNetworks').options);
     form.RequestTimeout = safeParseInt(page.querySelector('#RequestTimeout'));
     form.RetryAttempts = safeParseInt(page.querySelector('#RetryAttempts'));
+    form.DiscoverMovieTargetCount = safeParseInt(page.querySelector('#DiscoverMovieTargetCount'));
+    form.DiscoverSeriesTargetCount = safeParseInt(page.querySelector('#DiscoverSeriesTargetCount'));
+    form.DiscoverMinimumYear = safeParseInt(page.querySelector('#DiscoverMinimumYear'));
+    form.DiscoverExcludeIndia = nullIfDefault(page.querySelector('#DiscoverExcludeIndia').checked, config.ConfigDefaults.DiscoverExcludeIndia);
     form.MaxDiscoverPages = safeParseInt(page.querySelector('#MaxDiscoverPages'));
     form.MaxRetentionDays = safeParseInt(page.querySelector('#MaxRetentionDays'));
     form.ManageJellyBridgeLibrary = nullIfDefault(page.querySelector('#ManageJellyBridgeLibrary').checked, config.ConfigDefaults.ManageJellyBridgeLibrary);

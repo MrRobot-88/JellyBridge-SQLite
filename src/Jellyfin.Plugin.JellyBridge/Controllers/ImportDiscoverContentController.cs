@@ -1,10 +1,10 @@
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 using Jellyfin.Plugin.JellyBridge.Configuration;
+using Jellyfin.Plugin.JellyBridge.JellyseerrModel;
 using Jellyfin.Plugin.JellyBridge.Services;
 using Jellyfin.Plugin.JellyBridge.BridgeModels;
-using Jellyfin.Plugin.JellyBridge.JellyseerrModel;
 using Jellyfin.Plugin.JellyBridge.Utils;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyBridge.Controllers
 {
@@ -14,163 +14,261 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
     {
         private readonly DebugLogger<ImportDiscoverContentController> _logger;
         private readonly ApiService _apiService;
-        private readonly SyncService _syncService;
-        private readonly RefreshService _refreshService;
+        private readonly SqliteProductionSyncService _sqliteProductionSyncService;
 
-        public ImportDiscoverContentController(ILoggerFactory loggerFactory, ApiService apiService, SyncService syncService, RefreshService refreshService)
+        public ImportDiscoverContentController(
+            ILoggerFactory loggerFactory,
+            ApiService apiService,
+            SqliteProductionSyncService sqliteProductionSyncService)
         {
-            _logger = new DebugLogger<ImportDiscoverContentController>(loggerFactory.CreateLogger<ImportDiscoverContentController>());
+            _logger =
+                new DebugLogger<ImportDiscoverContentController>(
+                    loggerFactory.CreateLogger<ImportDiscoverContentController>());
+
             _apiService = apiService;
-            _syncService = syncService;
-            _refreshService = refreshService;
+            _sqliteProductionSyncService = sqliteProductionSyncService;
         }
 
         [HttpGet("Regions")]
         public async Task<IActionResult> GetRegions()
         {
-            _logger.LogInformation("Regions requested from plugin configuration page.");
-            
+            _logger.LogInformation(
+                "Regions requested from plugin configuration page.");
+
             try
             {
                 var config = Plugin.GetConfiguration();
-                _logger.LogDebug("Config - JellyseerrUrl: {Url}, ApiKey: {ApiKey}", 
-                    config.JellyseerrUrl, 
-                    string.IsNullOrEmpty(config.ApiKey) ? "EMPTY" : "SET");
-                
-                var regions = await _apiService.CallEndpointAsync(JellyseerrEndpoint.WatchProvidersRegions, config);
-                var typedRegions = (List<JellyseerrWatchProviderRegion>)regions ?? new List<JellyseerrWatchProviderRegion>();
-                
-                _logger.LogInformation("Retrieved {Count} regions", typedRegions.Count);
-                
-                if (typedRegions == null || typedRegions.Count == 0)
+
+                var regions =
+                    await _apiService.CallEndpointAsync(
+                        JellyseerrEndpoint.WatchProvidersRegions,
+                        config);
+
+                var typedRegions =
+                    regions as List<JellyseerrWatchProviderRegion>
+                    ?? new List<JellyseerrWatchProviderRegion>();
+
+                if (typedRegions.Count == 0)
                 {
-                    _logger.LogWarning("No regions returned from API service");
-                    return NotFound(new { 
-                        success = false, 
-                        message = "No regions returned from Jellyseerr API",
-                        details = "The Jellyseerr API returned an empty regions list. This may indicate a configuration issue or API version mismatch.",
-                        regions = new List<object>(),
-                        errorCode = "NO_REGIONS_FOUND"
-                    });
+                    return NotFound(
+                        new
+                        {
+                            success = false,
+                            message =
+                                "No regions returned from Jellyseerr API.",
+                            regions = new List<object>(),
+                            errorCode = "NO_REGIONS_FOUND"
+                        });
                 }
-                
-                return Ok(new { 
-                    success = true, 
-                    regions = typedRegions 
-                });
+
+                return Ok(
+                    new
+                    {
+                        success = true,
+                        regions = typedRegions
+                    });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to get watch regions");
-                return StatusCode(500, new { 
-                    success = false, 
-                    message = $"Failed to get watch regions: {ex.Message}",
-                    details = $"Regions retrieval exception: {ex.GetType().Name} - {ex.Message}",
-                    stackTrace = ex.StackTrace,
-                    errorCode = "REGIONS_EXCEPTION"
-                });
+                _logger.LogError(
+                    ex,
+                    "Failed to get watch regions.");
+
+                return StatusCode(
+                    500,
+                    new
+                    {
+                        success = false,
+                        message =
+                            $"Failed to get watch regions: {ex.Message}",
+                        errorCode = "REGIONS_EXCEPTION"
+                    });
             }
         }
 
         [HttpGet("Networks")]
-        public async Task<IActionResult> GetNetworks([FromQuery] string? region = null)
+        public async Task<IActionResult> GetNetworks(
+            [FromQuery] string? region = null)
         {
-            _logger.LogInformation("Networks requested from plugin configuration page for region: {Region}", region);
-            
+            _logger.LogInformation(
+                "Networks requested for region {Region}.",
+                region);
+
             try
             {
                 var config = Plugin.GetConfiguration();
-                // Use provided region or default from config
-                var targetRegion = region ?? Plugin.GetConfigOrDefault<string>(nameof(PluginConfiguration.Region));
+
+                var targetRegion =
+                    region
+                    ?? Plugin.GetConfigOrDefault<string>(
+                        nameof(PluginConfiguration.Region));
+
                 config.Region = targetRegion;
-                
-                // Get networks for both movies and TV, then combine and deduplicate
-                var movieNetworksList = (List<JellyseerrNetwork>)await _apiService.CallEndpointAsync(JellyseerrEndpoint.WatchProvidersMovies, config);
-                var showNetworksList = (List<JellyseerrNetwork>)await _apiService.CallEndpointAsync(JellyseerrEndpoint.WatchProvidersTv, config);
-                
-                _logger.LogTrace("MovieNetworks response type: {Type}, Count: {Count}", 
-                    movieNetworksList?.GetType().Name ?? "null", 
-                    movieNetworksList?.Count ?? 0);
-                
-                _logger.LogTrace("showNetworks response type: {Type}, Count: {Count}", 
-                    showNetworksList?.GetType().Name ?? "null", 
-                    showNetworksList?.Count ?? 0);
-                
-                // Combine networks and add country
-                var combinedNetworks = new List<JellyseerrNetwork>();
-                combinedNetworks.AddRange(movieNetworksList ?? new List<JellyseerrNetwork>());
-                combinedNetworks.AddRange(showNetworksList ?? new List<JellyseerrNetwork>());
-                if (combinedNetworks.Count == 0) {
-                    _logger.LogWarning("No networks returned from API service");
-                    return StatusCode(503, new { 
-                        success = false, 
-                        message = "No networks returned from Jellyseerr API",
-                        details = "The Jellyseerr API returned no networks for the selected region. This may indicate a configuration issue or API version mismatch.",
-                        errorCode = "NO_NETWORKS_FOUND"
-                    });
+
+                var movieNetworks =
+                    (List<JellyseerrNetwork>)
+                    await _apiService.CallEndpointAsync(
+                        JellyseerrEndpoint.WatchProvidersMovies,
+                        config);
+
+                var showNetworks =
+                    (List<JellyseerrNetwork>)
+                    await _apiService.CallEndpointAsync(
+                        JellyseerrEndpoint.WatchProvidersTv,
+                        config);
+
+                var combined =
+                    new List<JellyseerrNetwork>();
+
+                combined.AddRange(
+                    movieNetworks
+                    ?? new List<JellyseerrNetwork>());
+
+                combined.AddRange(
+                    showNetworks
+                    ?? new List<JellyseerrNetwork>());
+
+                if (combined.Count == 0)
+                {
+                    return StatusCode(
+                        503,
+                        new
+                        {
+                            success = false,
+                            message =
+                                "No networks returned from Jellyseerr API.",
+                            errorCode = "NO_NETWORKS_FOUND"
+                        });
                 }
-                combinedNetworks.ForEach(network => network.Country = targetRegion);
-                
-                _logger.LogInformation("Retrieved {Count} networks for region {Region}", combinedNetworks.Count, targetRegion);
-                
-                return Ok(combinedNetworks);
+
+                combined.ForEach(
+                    network =>
+                        network.Country = targetRegion);
+
+                return Ok(combined);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to get watch networks for region {Region}", region);
-                return StatusCode(500, new { 
-                    success = false, 
-                    message = $"{ex.Message}",
-                    details = $"Unknown error occurred while refreshing networks for region '{region}': {ex.GetType().Name} - {ex.Message}",
-                    stackTrace = ex.StackTrace,
-                    errorCode = "NETWORKS_EXCEPTION"
-                });
+                _logger.LogError(
+                    ex,
+                    "Failed to get watch networks.");
+
+                return StatusCode(
+                    500,
+                    new
+                    {
+                        success = false,
+                        message = ex.Message,
+                        errorCode = "NETWORKS_EXCEPTION"
+                    });
             }
         }
 
+        /// <summary>
+        /// SQLite-first manual Discover entry point.
+        ///
+        /// Stage 1 computes the desired catalog working set and SQLite
+        /// incremental plan only. It deliberately performs no filesystem
+        /// materialization yet.
+        /// </summary>
         [HttpPost("SyncDiscover")]
         public async Task<IActionResult> SyncDiscover()
         {
-            _logger.LogInformation("Sync discover requested from plugin configuration page.");
-            
+            _logger.LogInformation(
+                "SQLite-first manual Discover production sync requested.");
+
+            if (!Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled)))
+            {
+                return StatusCode(409, new
+                {
+                    success = false,
+                    sqliteFirst = true,
+                    message = "JellyBridge-SQLite is disabled. Enable the plugin before running a manual sync."
+                });
+            }
+
             try
             {
-                // Use Jellyfin-style locking that pauses instead of canceling
-                var result = await Plugin.ExecuteWithLockAsync(async () =>
-                {
-                    var syncResult = await _syncService.SyncFromJellyseerr();
-                    await _refreshService.ApplyRefreshAsync(syncResult);
+                var result =
+                    await Plugin.ExecuteWithLockAsync(
+                        async () =>
+                        {
+                            var plan =
+                                await _sqliteProductionSyncService
+                                    .RunAsync(
+                                        progress: null,
+                                        cancellationToken: HttpContext.RequestAborted)
+                                    .ConfigureAwait(false);
 
-                    _logger.LogInformation("Discover sync completed successfully:\n{SyncResult}", syncResult.ToString());
+                            return new
+                            {
+                                success = true,
+                                sqliteFirst = true,
+                                filesystemWrites = true,
 
-                    return new
-                    {
-                        result = syncResult.ToString(),
-                        success = syncResult.Success,
-                        message = syncResult.Message
-                    };
-                }, _logger, "Sync Discover");
+                                message =
+                                    "SQLite-first Discover synchronization completed.",
+
+                                desiredMovies =
+                                    plan.DesiredMovies,
+
+                                desiredSeries =
+                                    plan.DesiredSeries,
+
+                                existingState =
+                                    plan.ExistingState,
+
+                                add =
+                                    plan.AddCount,
+
+                                update =
+                                    plan.UpdateCount,
+
+                                remove =
+                                    plan.RemoveCount,
+
+                                unchanged =
+                                    plan.UnchangedCount,
+
+                                totalMilliseconds =
+                                    plan.TotalMilliseconds
+                            };
+                        },
+                        _logger,
+                        "JellyBridge SQLite Manual Sync");
 
                 return Ok(result);
             }
             catch (TimeoutException)
             {
-                var taskTimeoutMinutes = Plugin.GetConfigOrDefault<int>(nameof(PluginConfiguration.TaskTimeoutMinutes));
-                _logger.LogWarning("Sync discover timed out after {TimeoutMinutes} minutes waiting for lock", taskTimeoutMinutes);
-                return StatusCode(408, new { 
-                    success = false,
-                    error = "Request timeout",
-                    message = "Discover sync operation timed out while waiting for lock.",
-                    details = $"Operation timed out after {taskTimeoutMinutes} minutes waiting for another operation to complete"
-                });
+                var timeout =
+                    Plugin.GetConfigOrDefault<int>(
+                        nameof(
+                            PluginConfiguration.TaskTimeoutMinutes));
+
+                return StatusCode(
+                    408,
+                    new
+                    {
+                        success = false,
+                        error = "Request timeout",
+                        timeoutMinutes = timeout
+                    });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Sync discover failed");
-                return StatusCode(500, new { 
-                    message = $"Sync failed: {ex.Message}", 
-                    details = $"Sync operation exception: {ex.GetType().Name} - {ex.Message}" 
-                });
+                _logger.LogError(
+                    ex,
+                    "SQLite-first Discover synchronization failed.");
+
+                return StatusCode(
+                    500,
+                    new
+                    {
+                        success = false,
+                        message =
+                            $"SQLite Discover synchronization failed: {ex.Message}"
+                    });
             }
         }
     }

@@ -118,6 +118,11 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
+  <!-- SQLite-first final build exposes a single JellyBridge scheduled task. -->
+  <ItemGroup>
+    <Compile Remove="Tasks\SortTask.cs" />
+    <Compile Remove="Tasks\StartupTask.cs" />
+  </ItemGroup>
   <!-- Embed all source files and resources into the DLL -->
   <ItemGroup>
     <EmbeddedResource Include="**\*"

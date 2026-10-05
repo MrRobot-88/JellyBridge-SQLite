@@ -13,7 +13,7 @@ namespace Jellyfin.Plugin.JellyBridge.Tasks;
 /// <summary>
 /// Scheduled task for sorting discover library by updating play counts for all users.
 /// </summary>
-public class SortTask : IScheduledTask
+public class SortTask
 {
     private readonly DebugLogger<SortTask> _logger;
     private readonly IServiceScopeFactory _scopeFactory;

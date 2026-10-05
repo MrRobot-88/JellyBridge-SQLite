@@ -38,13 +38,9 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                 var syncTaskWrapper = _taskManager.ScheduledTasks.FirstOrDefault(t => t.ScheduledTask.Key == "JellyBridgeSync");
                 DateTimeOffset? lastRun;
                 DateTimeOffset? nextRun;
-                string? lastRunSource; // "Scheduled" or "Startup"
-
-                // Determine last run from TaskManager: consider scheduled and startup tasks
-                var startupTaskWrapper = _taskManager.ScheduledTasks.FirstOrDefault(t => t.ScheduledTask.Key == "JellyBridgeStartup");
+                string? lastRunSource;
 
                 // Config flags
-                var autoSyncOnStartupEnabled = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.EnableStartupSync));
                 var isPluginEnabled = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled));
                 // Read nullable timestamp directly from configuration as it is nullable
                 var scheduledTaskTimestamp = Plugin.GetConfiguration().ScheduledTaskTimestamp;
@@ -52,9 +48,9 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                 // Delegate timestamp calculation to JellyfinModels helper
                 (lastRun, lastRunSource, nextRun) = JellyfinTaskTrigger.CalculateTimestamps(
                     syncTaskWrapper,
-                    startupTaskWrapper,
+                    null,
                     isPluginEnabled,
-                    autoSyncOnStartupEnabled,
+                    false,
                     scheduledTaskTimestamp
                 );
                 

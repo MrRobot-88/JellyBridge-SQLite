@@ -1,172 +1,107 @@
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection;
 using Jellyfin.Plugin.JellyBridge.Configuration;
-using Jellyfin.Plugin.JellyBridge.Controllers;
-using Jellyfin.Plugin.JellyBridge.Services;
-using Jellyfin.Plugin.JellyBridge.BridgeModels;
-using Jellyfin.Plugin.JellyBridge;
-using MediaBrowser.Model.Tasks;
 using Jellyfin.Plugin.JellyBridge.JellyfinModels;
+using Jellyfin.Plugin.JellyBridge.Services;
 using Jellyfin.Plugin.JellyBridge.Utils;
+using MediaBrowser.Model.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyBridge.Tasks;
 
 /// <summary>
-/// Scheduled task for syncing Jellyseerr data.
+/// Production scheduled sync entry point for JellyBridge-SQLite.
+/// UI ARR catalog -> SQLite planner -> ADD/UPDATE/REMOVE -> exact Jellyfin path notifications.
 /// </summary>
-public class SyncTask : IScheduledTask
+public sealed class SyncTask : IScheduledTask
 {
     private readonly DebugLogger<SyncTask> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ITaskManager _taskManager;
-
 
     public SyncTask(
         ILogger<SyncTask> logger,
-        IServiceScopeFactory scopeFactory,
-        ITaskManager taskManager)
+        IServiceScopeFactory scopeFactory)
     {
         _logger = new DebugLogger<SyncTask>(logger);
         _scopeFactory = scopeFactory;
-        _taskManager = taskManager;
-        _logger.LogInformation("SyncTask constructor called - task initialized");
+
+        _logger.LogInformation(
+            "JellyBridge-SQLite SyncTask initialized - production SQLite-first orchestration active");
     }
 
-    public string Name => "JellyBridge Sync";
+    public string Name => "JellyBridge SQLite";
+
     public string Key => "JellyBridgeSync";
-    public string Description => "Syncs discover content from Jellyseerr to Jellyfin and favorites from Jellyfin to Jellyseerr.";
+
+    public string Description =>
+        "Synchronizes Discover Movies and Discover Series from the UI ARR catalog using SQLite state.";
+
     public string Category => "JellyBridge";
 
-    public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
+    public async Task ExecuteAsync(
+        IProgress<double> progress,
+        CancellationToken cancellationToken)
     {
-        try
+        var isEnabled = Plugin.GetConfigOrDefault<bool>(
+            nameof(PluginConfiguration.IsEnabled));
+
+        if (!isEnabled)
         {
-            var isSyncEnabled = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled));
-            if (!isSyncEnabled)
-            {
-                _logger.LogDebug("Automated sync task is disabled, skipping execution");
-                return;
-            }
+            _logger.LogInformation(
+                "JellyBridge-SQLite is disabled; production sync skipped.");
 
-            _logger.LogInformation("Starting interval sync task");
-
-            // Create a fresh DI scope for this execution so services are not
-            // affected by scope disposal in Jellyfin 10.11.5+ (ObjectDisposedException fix)
-            using var scope = _scopeFactory.CreateScope();
-            var syncService = scope.ServiceProvider.GetRequiredService<SyncService>();
-            var cleanupService = scope.ServiceProvider.GetRequiredService<CleanupService>();
-            var refreshService = scope.ServiceProvider.GetRequiredService<RefreshService>();
-
-            // Use Jellyfin-style locking that pauses instead of canceling
-            await Plugin.ExecuteWithLockAsync<(CleanupResult?, SyncJellyfinResult?, SyncJellyseerrResult?)>(async () =>
-            {
-                CleanupResult? cleanupResult = null;
-                SyncJellyseerrResult? syncFromResult = null;
-                SyncJellyfinResult? syncToResult = null;
-
-                // Initial report to indicate the task has started
-                progress.Report(10);
-
-                // Step 1: Sync discover from Jellyseerr
-                _logger.LogDebug("Step 1: Syncing discover from Jellyseerr...");
-
-                try
-                {
-                    syncFromResult = await syncService.SyncFromJellyseerr();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Step 1 failed: Sync from Jellyseerr");
-                    syncFromResult = new SyncJellyseerrResult
-                    {
-                        Success = false,
-                        Message = $"❌ Sync from Jellyseerr failed: {ex.Message}",
-                        Details = $"Exception type: {ex.GetType().Name}\nStack trace: {ex.StackTrace}"
-                    };
-                } finally {
-                    progress.Report(40);
-                }
-
-                // Step 2: Sync favorites to Jellyseerr
-                _logger.LogDebug("Step 2: Syncing favorites to Jellyseerr...");
-
-                try
-                {
-                    syncToResult = await syncService.SyncToJellyseerr();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Step 2 failed: Sync to Jellyseerr");
-                    syncToResult = new SyncJellyfinResult
-                    {
-                        Success = false,
-                        Message = $"❌ Sync to Jellyseerr failed: {ex.Message}",
-                        Details = $"Exception type: {ex.GetType().Name}\nStack trace: {ex.StackTrace}"
-                    };
-                } finally {
-                    progress.Report(70);
-                }
-
-                // Step 3: Cleanup metadata after sync operations
-                _logger.LogDebug("Step 3: Cleaning up metadata...");
-
-                try
-                {
-                    cleanupResult = await cleanupService.CleanupMetadataAsync();
-                    _logger.LogDebug("Step 3: Cleanup completed successfully");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error during metadata cleanup");
-                }
-                finally
-                {
-                    progress.Report(90);
-                }
-
-                // Show results and apply refresh
-                try {
-                    if (syncToResult != null)
-                        _logger.LogInformation("Sync to Jellyseerr result: {Result}", syncToResult.ToString());
-                    if (syncFromResult != null)
-                        _logger.LogInformation("Sync from Jellyseerr result: {Result}", syncFromResult.ToString());
-                    if (cleanupResult != null)
-                        _logger.LogDebug("Cleanup result: {Result}", cleanupResult.ToString());
-
-                    await refreshService.ApplyRefreshAsync( [syncToResult, syncFromResult, cleanupResult] );
-                } catch (Exception ex) {
-                    _logger.LogError(ex, "Error applying refresh operations");
-                } finally {
-                    progress.Report(100);
-                }
-
-                return (cleanupResult, syncToResult, syncFromResult);
-            }, _logger, "Scheduled Sync");
+            progress.Report(100);
+            return;
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error in scheduled Jellyseerr sync task");
-            throw;
-        }
+
+        await Plugin.ExecuteWithLockAsync(
+            async () =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+
+                var sqliteSync = scope.ServiceProvider
+                    .GetRequiredService<SqliteProductionSyncService>();
+
+                _logger.LogInformation(
+                    "SQLITE MAIN SYNC START | LegacyJsonSync=OFF | LegacyCleanup=OFF | GlobalScan=NO");
+
+                var result = await sqliteSync
+                    .RunAsync(progress, cancellationToken)
+                    .ConfigureAwait(false);
+
+                _logger.LogInformation(
+                    "SQLITE MAIN SYNC TASK PASS | Generation={Generation} | Movies={Movies} | Series={Series} | Add={Add} | Update={Update} | Remove={Remove} | Unchanged={Unchanged} | Applied={Applied} | TotalMs={TotalMs}",
+                    result.Generation,
+                    result.DesiredMovies,
+                    result.DesiredSeries,
+                    result.AddCount,
+                    result.UpdateCount,
+                    result.RemoveCount,
+                    result.UnchangedCount,
+                    result.AppliedChanges,
+                    result.TotalMilliseconds);
+
+                return result;
+            },
+            _logger,
+            "JellyBridge SQLite");
     }
 
     public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
     {
-        var isEnabled = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled));
-        var intervalHours = Plugin.GetConfigOrDefault<double>(nameof(PluginConfiguration.SyncIntervalHours));
-        
+        var isEnabled = Plugin.GetConfigOrDefault<bool>(
+            nameof(PluginConfiguration.IsEnabled));
+
         if (!isEnabled)
         {
-            _logger.LogDebug("Plugin is disabled, returning empty triggers");
             return Array.Empty<TaskTriggerInfo>();
         }
 
-        _logger.LogDebug("Added interval trigger with {IntervalHours} hours", intervalHours);
-        
-        return new List<TaskTriggerInfo>
-        {
+        var intervalHours = Plugin.GetConfigOrDefault<double>(
+            nameof(PluginConfiguration.SyncIntervalHours));
+
+        return
+        [
             JellyfinTaskTrigger.Interval(TimeSpan.FromHours(intervalHours))
-        };
+        ];
     }
 }
-

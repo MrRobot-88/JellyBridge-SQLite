@@ -41,6 +41,10 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                     IsEnabled = config.IsEnabled,
                     EnableInMainMenu = config.EnableInMainMenu,
                     SyncIntervalHours = config.SyncIntervalHours,
+                    DiscoverMovieTargetCount = config.DiscoverMovieTargetCount,
+                    DiscoverSeriesTargetCount = config.DiscoverSeriesTargetCount,
+                    DiscoverMinimumYear = config.DiscoverMinimumYear,
+                    DiscoverExcludeIndia = config.DiscoverExcludeIndia,
 
                     // Import Discover Content
                     Region = config.Region,
@@ -119,10 +123,6 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                     // Capture old values BEFORE mutating config
                     var oldEnabled = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled), config);
                     var oldInterval = Plugin.GetConfigOrDefault<double>(nameof(PluginConfiguration.SyncIntervalHours), config);
-                    var oldStartupSync = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.EnableStartupSync), config);
-                    var oldSortTask = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.EnableAutomatedSortTask), config);
-                    var oldSortOrder = Plugin.GetConfigOrDefault<SortOrderOptions>(nameof(PluginConfiguration.SortOrder), config);
-                    var oldSortInterval = Plugin.GetConfigOrDefault<double>(nameof(PluginConfiguration.SortTaskIntervalHours), config);
 
                     // Update configuration properties using simplified helper
                     
@@ -133,6 +133,10 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                     SetJsonValue<bool?>(configData, nameof(config.IsEnabled), config);
                     SetJsonValue<bool?>(configData, nameof(config.EnableInMainMenu), config);
                     SetJsonValue<double?>(configData, nameof(config.SyncIntervalHours), config);
+                    SetJsonValue<int?>(configData, nameof(config.DiscoverMovieTargetCount), config);
+                    SetJsonValue<int?>(configData, nameof(config.DiscoverSeriesTargetCount), config);
+                    SetJsonValue<int?>(configData, nameof(config.DiscoverMinimumYear), config);
+                    SetJsonValue<bool?>(configData, nameof(config.DiscoverExcludeIndia), config);
                     
                     // Import Discover Content
                     SetJsonValue<string>(configData, nameof(config.Region), config);
@@ -179,14 +183,10 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                     // Compute effective old vs new values (new values AFTER edits)
                     var newEnabled = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled), config);
                     var newInterval = Plugin.GetConfigOrDefault<double>(nameof(PluginConfiguration.SyncIntervalHours), config);
-                    var newStartupSync = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.EnableStartupSync), config);
-                    var newSortTask = Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.EnableSortLibraryRefresh), config);
-                    var newSortOrder = Plugin.GetConfigOrDefault<SortOrderOptions>(nameof(PluginConfiguration.SortOrder), config);
-                    var newSortInterval = Plugin.GetConfigOrDefault<double>(nameof(PluginConfiguration.SortTaskIntervalHours), config);
 
                     // Debug snapshot of old vs new
-                    _logger.LogDebug("Config snapshot (old): enabled={OldEnabled}, interval={OldInterval}, autoStartup={OldStartupSync}", oldEnabled, oldInterval, oldStartupSync);
-                    _logger.LogDebug("Config snapshot (new): enabled={NewEnabled}, interval={NewInterval}, autoStartup={NewStartupSync}", newEnabled, newInterval, newStartupSync);
+                    _logger.LogDebug("Config snapshot (old): enabled={OldEnabled}, interval={OldInterval}", oldEnabled, oldInterval);
+                    _logger.LogDebug("Config snapshot (new): enabled={NewEnabled}, interval={NewInterval}", newEnabled, newInterval);
             
                     // If the scheduled sync configuration changed, stamp when triggers will be reloaded
                     var syncTaskChanged = oldEnabled != newEnabled
@@ -197,63 +197,31 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                         _logger.LogDebug("ScheduledTaskTimestamp set pre-save: {Timestamp}", config.ScheduledTaskTimestamp);
                     }
 
-                    // Reload triggers selectively based on changed properties
+                    // Reload only the single production SQLite sync task.
                     try
                     {
-                        // Locate our task workers by their keys so we can update triggers precisely without affecting other tasks.
-                        // We intentionally avoid reloading all tasks because Jellyfin defers interval tasks until after the trigger reload time + sync interval.
-                        // To prevent unnecessary deferrals, we only touch:
-                        // - the scheduled sync task when Enabled/Interval changes
-                        // - the startup task when EnableStartupSync changes
-                        // - the sort task when SortOrder/SortTaskIntervalHours changes
-                        var syncWorker = _taskManager.ScheduledTasks.FirstOrDefault(t => t.ScheduledTask.Key == "JellyBridgeSync");
-                        var startupWorker = _taskManager.ScheduledTasks.FirstOrDefault(t => t.ScheduledTask.Key == "JellyBridgeStartup");
-                        var sortWorker = _taskManager.ScheduledTasks.FirstOrDefault(t => t.ScheduledTask.Key == "JellyBridgeSort");
+                        var syncWorker = _taskManager.ScheduledTasks.FirstOrDefault(
+                            t => t.ScheduledTask.Key == "JellyBridgeSync");
 
-                        // Update scheduled sync task triggers only if IsEnabled or SyncInterval changed
                         if (syncTaskChanged && syncWorker != null && syncWorker.ScheduledTask is Tasks.SyncTask syncTask)
                         {
-                            _logger.LogDebug("Reloading sync task triggers due to config change (Enabled/Interval). Old: enabled={OldEnabled}, interval={OldInterval}; New: enabled={NewEnabled}, interval={NewInterval}", oldEnabled, oldInterval, newEnabled, newInterval);
-                            
-                            var newTriggers = syncTask.GetDefaultTriggers();
-                            syncWorker.Triggers = newTriggers.ToList();
+                            _logger.LogDebug(
+                                "Reloading SQLite sync task triggers. Old: enabled={OldEnabled}, interval={OldInterval}; New: enabled={NewEnabled}, interval={NewInterval}",
+                                oldEnabled,
+                                oldInterval,
+                                newEnabled,
+                                newInterval);
+
+                            syncWorker.Triggers = syncTask.GetDefaultTriggers().ToList();
                             syncWorker.ReloadTriggerEvents();
-                            _logger.LogDebug("Sync task triggers reloaded.");
+                            _logger.LogDebug("SQLite sync task triggers reloaded.");
                         }
-
-                        // Update startup task triggers only if EnableStartupSync changed
-                        if (oldStartupSync != newStartupSync && startupWorker != null && startupWorker.ScheduledTask is Tasks.StartupTask startupTask)
-                        {
-                            _logger.LogDebug("Reloading startup task triggers due to EnableStartupSync change. Old={Old}, New={New}", oldStartupSync, newStartupSync);
-                            
-                            // Startup task exposes default triggers; always a startup trigger
-                            var triggers = startupTask.GetDefaultTriggers();
-                            startupWorker.Triggers = triggers.ToList();
-                            startupWorker.ReloadTriggerEvents();
-                            _logger.LogDebug("Startup task triggers reloaded successfully");
-                        }
-
-                        // Update sort task triggers only if SortOrder or SortTaskIntervalHours changed
-                        var sortTaskChanged = oldSortTask != newSortTask
-                            || oldSortOrder != newSortOrder
-                            || Math.Abs(oldSortInterval - newSortInterval) > double.Epsilon;
-                        if (sortTaskChanged && sortWorker != null && sortWorker.ScheduledTask is Tasks.SortTask createSortTask)
-                        {
-                            _logger.LogDebug("Reloading sort task triggers due to config change. Old: sortOrder={OldSortOrder}, interval={OldInterval}; New: sortOrder={NewSortOrder}, interval={NewInterval}", oldSortOrder, oldSortInterval, newSortOrder, newSortInterval);
-                            
-                            var newTriggers = createSortTask.GetDefaultTriggers();
-                            sortWorker.Triggers = newTriggers.ToList();
-                            sortWorker.ReloadTriggerEvents();
-                            _logger.LogDebug("Sort task triggers reloaded.");
-                        }
-                    
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to reload task triggers");
+                        _logger.LogWarning(ex, "Failed to reload SQLite sync task triggers");
                     }
-                    
-                    // Save the configuration
+                                        // Save the configuration
                     Plugin.Instance.UpdateConfiguration(config);
                     
                     _logger.LogDebug("Configuration updated successfully");
