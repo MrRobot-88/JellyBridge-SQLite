@@ -19,17 +19,20 @@ public sealed class SqliteMaterializerService
     public const string MaterializedState = "sqlite-materialized";
 
     private readonly DiscoverPosterService _posterService;
+    private readonly DiscoverCatalogClient _catalogClient;
     private readonly PlaceholderVideoGenerator _placeholderVideoGenerator;
     private readonly BridgeStateStore _stateStore;
     private readonly ILogger<SqliteMaterializerService> _logger;
 
     public SqliteMaterializerService(
         DiscoverPosterService posterService,
+        DiscoverCatalogClient catalogClient,
         PlaceholderVideoGenerator placeholderVideoGenerator,
         BridgeStateStore stateStore,
         ILogger<SqliteMaterializerService> logger)
     {
         _posterService = posterService;
+        _catalogClient = catalogClient;
         _placeholderVideoGenerator = placeholderVideoGenerator;
         _stateStore = stateStore;
         _logger = logger;
@@ -456,6 +459,18 @@ public sealed class SqliteMaterializerService
         var rootName = isTv ? "tvshow" : "movie";
         var catalog = item.CatalogItem;
 
+        var trailer = await _catalogClient
+            .GetTrailerAsync(
+                item.MediaType,
+                item.TmdbId,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var trailerUrl = trailer?.HasTrailer == true
+            && !string.IsNullOrWhiteSpace(trailer.YoutubeKey)
+            ? $"plugin://plugin.video.youtube/play/?video_id={trailer.YoutubeKey}"
+            : null;
+
         var root = new XElement(
             rootName,
             new XElement("id", catalog.TmdbId),
@@ -489,6 +504,9 @@ public sealed class SqliteMaterializerService
             catalog.OriginCountries
                 .Where(static country => !string.IsNullOrWhiteSpace(country))
                 .Select(static country => new XElement("country", country)),
+            !string.IsNullOrWhiteSpace(trailerUrl)
+                ? new XElement("trailer", trailerUrl)
+                : null,
             new XElement("watched", "false"));
 
         var document = new XDocument(

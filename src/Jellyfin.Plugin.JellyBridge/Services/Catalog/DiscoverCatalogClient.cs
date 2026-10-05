@@ -14,6 +14,7 @@ namespace Jellyfin.Plugin.JellyBridge.Services.Catalog;
 public sealed class DiscoverCatalogClient
 {
     public const int MaximumPageSize = 200;
+    public const string TrailerProfile = "seerr-youtube-trailer-v2";
 
     private readonly HttpClient _httpClient;
     private readonly ILogger<DiscoverCatalogClient> _logger;
@@ -167,6 +168,66 @@ public sealed class DiscoverCatalogClient
         return page;
     }
 
+    public async Task<DiscoverTrailerResult?> GetTrailerAsync(
+        string mediaType,
+        long tmdbId,
+        CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0)
+        {
+            return null;
+        }
+
+        var normalized = string.Equals(
+                mediaType,
+                "tv",
+                StringComparison.OrdinalIgnoreCase)
+            || string.Equals(
+                mediaType,
+                "series",
+                StringComparison.OrdinalIgnoreCase)
+            ? "tv"
+            : "movie";
+
+        var baseUrl = Plugin.GetConfigOrDefault<string>(
+            nameof(PluginConfiguration.DiscoverCatalogUrl));
+
+        var url =
+            $"{baseUrl.TrimEnd('/')}/trailer/{normalized}/{tmdbId}";
+
+        try
+        {
+            using var response = await _httpClient.GetAsync(
+                url,
+                cancellationToken).ConfigureAwait(false);
+
+            response.EnsureSuccessStatusCode();
+
+            await using var stream = await response.Content
+                .ReadAsStreamAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            return await JsonSerializer.DeserializeAsync<DiscoverTrailerResult>(
+                stream,
+                JsonOptions,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Discover trailer lookup failed: media={MediaType}, tmdb={TmdbId}",
+                normalized,
+                tmdbId);
+
+            return null;
+        }
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -192,6 +253,33 @@ public sealed class DiscoverCatalogPage
 
     [JsonPropertyName("items")]
     public List<DiscoverCatalogItem> Items { get; set; } = new();
+}
+
+public sealed class DiscoverTrailerResult
+{
+    [JsonPropertyName("mediaType")]
+    public string MediaType { get; set; } = string.Empty;
+
+    [JsonPropertyName("tmdbId")]
+    public long TmdbId { get; set; }
+
+    [JsonPropertyName("hasTrailer")]
+    public bool HasTrailer { get; set; }
+
+    [JsonPropertyName("youtubeKey")]
+    public string? YoutubeKey { get; set; }
+
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("size")]
+    public int? Size { get; set; }
+
+    [JsonPropertyName("source")]
+    public string? Source { get; set; }
 }
 
 public sealed class DiscoverCatalogItem

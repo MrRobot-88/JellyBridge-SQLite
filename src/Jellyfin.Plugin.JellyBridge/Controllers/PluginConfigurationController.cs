@@ -45,6 +45,8 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                     DiscoverSeriesTargetCount = config.DiscoverSeriesTargetCount,
                     DiscoverMinimumYear = config.DiscoverMinimumYear,
                     DiscoverExcludeIndia = config.DiscoverExcludeIndia,
+                    DiscoverExcludedCountries = config.DiscoverExcludedCountries,
+                    DiscoverExcludedLanguages = config.DiscoverExcludedLanguages,
 
                     // Import Discover Content
                     Region = config.Region,
@@ -137,6 +139,8 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                     SetJsonValue<int?>(configData, nameof(config.DiscoverSeriesTargetCount), config);
                     SetJsonValue<int?>(configData, nameof(config.DiscoverMinimumYear), config);
                     SetJsonValue<bool?>(configData, nameof(config.DiscoverExcludeIndia), config);
+                    SetJsonValue<List<string>>(configData, nameof(config.DiscoverExcludedCountries), config);
+                    SetJsonValue<List<string>>(configData, nameof(config.DiscoverExcludedLanguages), config);
                     
                     // Import Discover Content
                     SetJsonValue<string>(configData, nameof(config.Region), config);
@@ -358,7 +362,24 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                     value = bool.TryParse(str, out var bv) ? bv : (bool?)null;
                 }
             }
-            else if (typeof(T).IsEnum || (typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(Nullable<>) && typeof(T).GetGenericArguments()[0].IsEnum))
+            else if (typeof(T) == typeof(List<string>))
+            {
+                if (element.ValueKind == JsonValueKind.Null)
+                {
+                    value = null;
+                }
+                else if (element.ValueKind == JsonValueKind.Array)
+                {
+                    value = element
+                        .EnumerateArray()
+                        .Where(static item => item.ValueKind == JsonValueKind.String)
+                        .Select(static item => item.GetString()?.Trim())
+                        .Where(static item => !string.IsNullOrWhiteSpace(item))
+                        .Select(static item => item!)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+            }            else if (typeof(T).IsEnum || (typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(Nullable<>) && typeof(T).GetGenericArguments()[0].IsEnum))
             {
                 // Handle enum types (including nullable enums)
                 var enumType = typeof(T).IsGenericType ? typeof(T).GetGenericArguments()[0] : typeof(T);

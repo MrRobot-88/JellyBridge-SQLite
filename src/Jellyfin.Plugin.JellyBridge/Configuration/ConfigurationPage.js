@@ -1,6 +1,156 @@
 const JellyBridgeConfigurationPage = {
     pluginUniqueId: '8ecc808c-d6e9-432f-9219-b638fbfb37e6'
 };
+// ISO code lists used by the SQLite Discover exclusion UI. Display names are
+// resolved by the browser so the labels follow the user's UI locale when possible.
+const DISCOVER_COUNTRY_CODES = `AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW`.split(/\s+/);
+const DISCOVER_LANGUAGE_CODES = `aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl sm sn so sq sr ss st su sv sw ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu xx`.split(/\s+/);
+const LEGACY_INDIAN_LANGUAGE_CODES = ['hi', 'ta', 'te', 'ml', 'kn', 'bn', 'mr', 'gu', 'pa'];
+
+function getDiscoverDisplayName(type, code) {
+    try {
+        if (typeof Intl !== 'undefined' && Intl.DisplayNames) {
+            const displayNames = new Intl.DisplayNames([navigator.language || 'en'], { type: type });
+            return displayNames.of(code) || code.toUpperCase();
+        }
+    } catch (e) {
+        // Fall back to the ISO code below.
+    }
+    return code.toUpperCase();
+}
+
+function getDiscoverExcludedValues(page, containerId) {
+    const container = page.querySelector(`#${containerId}`);
+    if (!container) return [];
+    return Array.from(container.querySelectorAll('input.discoverFilterCheckbox:checked'))
+        .map(input => input.dataset.code)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+}
+
+function updateDiscoverExclusionCount(page, containerId, countId) {
+    const count = getDiscoverExcludedValues(page, containerId).length;
+    const target = page.querySelector(`#${countId}`);
+    if (target) target.textContent = count.toString();
+}
+
+function renderDiscoverExclusionList(page, options) {
+    const container = page.querySelector(`#${options.containerId}`);
+    const search = page.querySelector(`#${options.searchId}`);
+    if (!container || !search) return;
+
+    const selected = new Set((options.selected || []).map(code => String(code).toLowerCase()));
+    const allCodes = Array.from(new Set([
+        ...options.codes.map(code => String(code).toLowerCase()),
+        ...selected
+    ]));
+
+    const entries = allCodes
+        .map(code => ({
+            code,
+            name: getDiscoverDisplayName(options.displayType, options.displayType === 'region' ? code.toUpperCase() : code.toLowerCase())
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name, navigator.language || 'en'));
+
+    container.innerHTML = '';
+    entries.forEach(entry => {
+        const label = document.createElement('label');
+        label.className = 'discoverFilterItem';
+        label.dataset.searchText = `${entry.name} ${entry.code}`.toLowerCase();
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'discoverFilterCheckbox';
+        checkbox.dataset.code = entry.code;
+        checkbox.checked = selected.has(entry.code);
+        checkbox.addEventListener('change', () => {
+            updateDiscoverExclusionCount(page, options.containerId, options.countId);
+        });
+
+        const name = document.createElement('span');
+        name.textContent = entry.name;
+
+        const code = document.createElement('span');
+        code.className = 'discoverFilterCode';
+        code.textContent = entry.code.toUpperCase();
+
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(' '));
+        label.appendChild(name);
+        label.appendChild(code);
+        container.appendChild(label);
+    });
+
+    function applySearch() {
+        const query = (search.value || '').trim().toLowerCase();
+        Array.from(container.querySelectorAll('.discoverFilterItem')).forEach(item => {
+            item.style.display = !query || item.dataset.searchText.includes(query) ? '' : 'none';
+        });
+    }
+
+    search.addEventListener('input', applySearch);
+    applySearch();
+    updateDiscoverExclusionCount(page, options.containerId, options.countId);
+}
+
+function setDiscoverExcludedValues(page, containerId, codes, countId) {
+    const wanted = new Set((codes || []).map(code => String(code).toLowerCase()));
+    const container = page.querySelector(`#${containerId}`);
+    if (!container) return;
+    Array.from(container.querySelectorAll('input.discoverFilterCheckbox')).forEach(input => {
+        input.checked = wanted.has(input.dataset.code);
+    });
+    updateDiscoverExclusionCount(page, containerId, countId);
+}
+
+function initializeDiscoverExclusionFilters(page) {
+    const config = window.configJellyBridge || {};
+    const defaults = config.ConfigDefaults || {};
+    const legacyIndia = config.DiscoverExcludeIndia ?? defaults.DiscoverExcludeIndia ?? true;
+
+    const selectedCountries = Array.isArray(config.DiscoverExcludedCountries)
+        ? config.DiscoverExcludedCountries
+        : (Array.isArray(defaults.DiscoverExcludedCountries)
+            ? defaults.DiscoverExcludedCountries
+            : (legacyIndia ? ['IN'] : []));
+
+    const selectedLanguages = Array.isArray(config.DiscoverExcludedLanguages)
+        ? config.DiscoverExcludedLanguages
+        : (Array.isArray(defaults.DiscoverExcludedLanguages)
+            ? defaults.DiscoverExcludedLanguages
+            : (legacyIndia ? LEGACY_INDIAN_LANGUAGE_CODES : []));
+
+    renderDiscoverExclusionList(page, {
+        containerId: 'DiscoverExcludedCountries',
+        searchId: 'DiscoverCountryFilterSearch',
+        countId: 'DiscoverExcludedCountriesCount',
+        codes: DISCOVER_COUNTRY_CODES,
+        selected: selectedCountries,
+        displayType: 'region'
+    });
+
+    renderDiscoverExclusionList(page, {
+        containerId: 'DiscoverExcludedLanguages',
+        searchId: 'DiscoverLanguageFilterSearch',
+        countId: 'DiscoverExcludedLanguagesCount',
+        codes: DISCOVER_LANGUAGE_CODES,
+        selected: selectedLanguages,
+        displayType: 'language'
+    });
+
+    page.querySelector('#clearExcludedCountries')?.addEventListener('click', () => {
+        setDiscoverExcludedValues(page, 'DiscoverExcludedCountries', [], 'DiscoverExcludedCountriesCount');
+    });
+    page.querySelector('#selectIndiaCountryPreset')?.addEventListener('click', () => {
+        setDiscoverExcludedValues(page, 'DiscoverExcludedCountries', ['IN'], 'DiscoverExcludedCountriesCount');
+    });
+    page.querySelector('#clearExcludedLanguages')?.addEventListener('click', () => {
+        setDiscoverExcludedValues(page, 'DiscoverExcludedLanguages', [], 'DiscoverExcludedLanguagesCount');
+    });
+    page.querySelector('#selectIndianLanguagePreset')?.addEventListener('click', () => {
+        setDiscoverExcludedValues(page, 'DiscoverExcludedLanguages', LEGACY_INDIAN_LANGUAGE_CODES, 'DiscoverExcludedLanguagesCount');
+    });
+}
 
 export default function (view) {
     let isInitialized = false;
@@ -704,7 +854,7 @@ function initializeImportContent(page) {
     setInputField(page, 'DiscoverMovieTargetCount');
     setInputField(page, 'DiscoverSeriesTargetCount');
     setInputField(page, 'DiscoverMinimumYear');
-    setInputField(page, 'DiscoverExcludeIndia', true);
+    initializeDiscoverExclusionFilters(page);
 
     // Legacy Jellyseerr discover fields remain hidden for compatibility
     setInputField(page, 'MaxDiscoverPages');
@@ -760,11 +910,22 @@ function initializeImportContent(page) {
 
 function performSyncImportContent(page) {
     const syncButton = page.querySelector('#syncDiscover');
+    const movieTarget = Number.parseInt(page.querySelector('#DiscoverMovieTargetCount')?.value ?? '', 10);
+    const seriesTarget = Number.parseInt(page.querySelector('#DiscoverSeriesTargetCount')?.value ?? '', 10);
+    const excludedCountries = getDiscoverExcludedValues(page, 'DiscoverExcludedCountries');
+    const excludedLanguages = getDiscoverExcludedValues(page, 'DiscoverExcludedLanguages');
+
+    if (!Number.isInteger(movieTarget) || movieTarget < 0 || movieTarget > 50000
+        || !Number.isInteger(seriesTarget) || seriesTarget < 0 || seriesTarget > 50000) {
+        DisplayMessage('❌ Movies and Series targets must be whole numbers from 0 to 50,000.');
+        scrollToElement('syncSettings');
+        return;
+    }
     
     // Show confirmation dialog for saving settings before sync
     Dashboard.confirm({
-        title: 'Confirm Save',
-        text: 'Settings will be saved before starting discover sync.',
+        title: 'Save & Sync Discover',
+        text: `Save targets and sync the top eligible catalog titles? Movies: ${movieTarget.toLocaleString()} · Series: ${seriesTarget.toLocaleString()} · Excluded countries: ${excludedCountries.length} · Excluded languages: ${excludedLanguages.length}`,
         confirmText: '💾 Save & Sync 📥',
         cancelText: 'Cancel',
         primary: "confirm"
@@ -778,28 +939,24 @@ function performSyncImportContent(page) {
             savePluginConfiguration(page).then(function(result) {
                 // Show loading message in the sync result textbox
                 syncDiscoverResult.style.display = 'block';
-                appendToResultBox(syncDiscoverResult, '🔄 Syncing library...', true);
+                appendToResultBox(syncDiscoverResult, '🚀 Saving targets and starting JellyBridge SQLite in the background...', true);
                 appendToResultBox(syncDiscoverResult, "⏳ " + new Date().toLocaleTimeString());
                 
                 Dashboard.processPluginConfigurationUpdateResult(result);
                 // sync if confirmed
                 Dashboard.showLoadingMsg();
                 return ApiClient.ajax({
-                    url: ApiClient.getUrl('JellyBridge/SyncDiscover'),
+                    url: ApiClient.getUrl('JellyBridge/QueueSyncDiscover'),
                     type: 'POST',
                     data: '{}',
                     contentType: 'application/json',
                     dataType: 'json'
                 }).then(function(syncData) {
                     const summary = [
-                        syncData.message || 'SQLite-first Discover synchronization completed.',
-                        `Movies: ${syncData.desiredMovies ?? '?'}`,
-                        `Series: ${syncData.desiredSeries ?? '?'}`,
-                        `Add: ${syncData.add ?? '?'}`,
-                        `Update: ${syncData.update ?? '?'}`,
-                        `Remove: ${syncData.remove ?? '?'}`,
-                        `Unchanged: ${syncData.unchanged ?? '?'}`,
-                        `Time: ${syncData.totalMilliseconds ?? '?'} ms`
+                        syncData.message || 'JellyBridge SQLite sync started in the background.',
+                        `Movies target: ${(syncData.movieTarget ?? movieTarget).toLocaleString()}`,
+                        `Series target: ${(syncData.seriesTarget ?? seriesTarget).toLocaleString()}`,
+                        syncData.alreadyRunning ? 'Status: already running' : 'Status: queued'
                     ].join('\n');
                     appendToResultBox(syncDiscoverResult, '\n' + summary);
                     scrollToElement('syncDiscoverResult');
@@ -1685,7 +1842,9 @@ function savePluginConfiguration(page) {
     form.DiscoverMovieTargetCount = safeParseInt(page.querySelector('#DiscoverMovieTargetCount'));
     form.DiscoverSeriesTargetCount = safeParseInt(page.querySelector('#DiscoverSeriesTargetCount'));
     form.DiscoverMinimumYear = safeParseInt(page.querySelector('#DiscoverMinimumYear'));
-    form.DiscoverExcludeIndia = nullIfDefault(page.querySelector('#DiscoverExcludeIndia').checked, config.ConfigDefaults.DiscoverExcludeIndia);
+    form.DiscoverExcludedCountries = getDiscoverExcludedValues(page, 'DiscoverExcludedCountries');
+    form.DiscoverExcludedLanguages = getDiscoverExcludedValues(page, 'DiscoverExcludedLanguages');
+    form.DiscoverExcludeIndia = null; // legacy field; list settings above now drive selection
     form.MaxDiscoverPages = safeParseInt(page.querySelector('#MaxDiscoverPages'));
     form.MaxRetentionDays = safeParseInt(page.querySelector('#MaxRetentionDays'));
     form.ManageJellyBridgeLibrary = nullIfDefault(page.querySelector('#ManageJellyBridgeLibrary').checked, config.ConfigDefaults.ManageJellyBridgeLibrary);

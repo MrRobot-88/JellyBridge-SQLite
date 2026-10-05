@@ -5,6 +5,7 @@ using Jellyfin.Plugin.JellyBridge.BridgeModels;
 using Jellyfin.Plugin.JellyBridge.Utils;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using MediaBrowser.Model.Tasks;
 
 namespace Jellyfin.Plugin.JellyBridge.Controllers
 {
@@ -15,11 +16,13 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
         private readonly DebugLogger<ImportDiscoverContentController> _logger;
         private readonly ApiService _apiService;
         private readonly SqliteProductionSyncService _sqliteProductionSyncService;
+        private readonly ITaskManager _taskManager;
 
         public ImportDiscoverContentController(
             ILoggerFactory loggerFactory,
             ApiService apiService,
-            SqliteProductionSyncService sqliteProductionSyncService)
+            SqliteProductionSyncService sqliteProductionSyncService,
+            ITaskManager taskManager)
         {
             _logger =
                 new DebugLogger<ImportDiscoverContentController>(
@@ -27,6 +30,7 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
 
             _apiService = apiService;
             _sqliteProductionSyncService = sqliteProductionSyncService;
+            _taskManager = taskManager;
         }
 
         [HttpGet("Regions")]
@@ -171,6 +175,63 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
         /// incremental plan only. It deliberately performs no filesystem
         /// materialization yet.
         /// </summary>
+        [HttpPost("QueueSyncDiscover")]
+        public IActionResult QueueSyncDiscover()
+        {
+            if (!Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled)))
+            {
+                return StatusCode(409, new
+                {
+                    success = false,
+                    queued = false,
+                    message = "JellyBridge-SQLite is disabled. Enable the plugin before starting sync."
+                });
+            }
+
+            var worker = _taskManager.ScheduledTasks.FirstOrDefault(
+                task => task.ScheduledTask.Key == "JellyBridgeSync");
+
+            if (worker is null)
+            {
+                return StatusCode(503, new
+                {
+                    success = false,
+                    queued = false,
+                    message = "JellyBridge SQLite scheduled task was not found."
+                });
+            }
+
+            if (worker.State == TaskState.Running
+                || worker.State == TaskState.Cancelling)
+            {
+                return Ok(new
+                {
+                    success = true,
+                    queued = false,
+                    alreadyRunning = true,
+                    taskId = worker.Id,
+                    movieTarget = Plugin.GetConfigOrDefault<int>(nameof(PluginConfiguration.DiscoverMovieTargetCount)),
+                    seriesTarget = Plugin.GetConfigOrDefault<int>(nameof(PluginConfiguration.DiscoverSeriesTargetCount)),
+                    message = "JellyBridge SQLite is already running."
+                });
+            }
+
+            _taskManager.QueueScheduledTask<Tasks.SyncTask>();
+
+            _logger.LogInformation(
+                "SQLite-first Discover sync queued from plugin configuration UI.");
+
+            return Accepted(new
+            {
+                success = true,
+                queued = true,
+                alreadyRunning = false,
+                taskId = worker.Id,
+                movieTarget = Plugin.GetConfigOrDefault<int>(nameof(PluginConfiguration.DiscoverMovieTargetCount)),
+                seriesTarget = Plugin.GetConfigOrDefault<int>(nameof(PluginConfiguration.DiscoverSeriesTargetCount)),
+                message = "JellyBridge SQLite sync queued in the background."
+            });
+        }
         [HttpPost("SyncDiscover")]
         public async Task<IActionResult> SyncDiscover()
         {

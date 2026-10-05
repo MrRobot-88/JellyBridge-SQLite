@@ -46,8 +46,7 @@ public sealed class CatalogSelectionService
         var minimumYear = Plugin.GetConfigOrDefault<int>(
             nameof(PluginConfiguration.DiscoverMinimumYear));
 
-        var excludeIndia = Plugin.GetConfigOrDefault<bool>(
-            nameof(PluginConfiguration.DiscoverExcludeIndia));
+        var (excludedCountries, excludedLanguages) = GetExclusionPolicy();
 
         var result = new List<DesiredCatalogItem>(targetCount);
         var seen = new HashSet<long>();
@@ -99,7 +98,7 @@ public sealed class CatalogSelectionService
                     continue;
                 }
 
-                if (excludeIndia && IsIndian(item))
+                if (IsExcluded(item, excludedCountries, excludedLanguages))
                 {
                     continue;
                 }
@@ -171,8 +170,7 @@ public sealed class CatalogSelectionService
         var minimumYear = Plugin.GetConfigOrDefault<int>(
             nameof(PluginConfiguration.DiscoverMinimumYear));
 
-        var excludeIndia = Plugin.GetConfigOrDefault<bool>(
-            nameof(PluginConfiguration.DiscoverExcludeIndia));
+        var (excludedCountries, excludedLanguages) = GetExclusionPolicy();
 
         var offset = 0;
         var total = int.MaxValue;
@@ -226,10 +224,10 @@ public sealed class CatalogSelectionService
                         $"TMDB {tmdbId} was found but releaseDate {item.ReleaseDate} is still in the future.");
                 }
 
-                if (excludeIndia && IsIndian(item))
+                if (IsExcluded(item, excludedCountries, excludedLanguages))
                 {
                     throw new InvalidOperationException(
-                        $"TMDB {tmdbId} was found but is excluded by the India filter.");
+                        $"TMDB {tmdbId} was found but is excluded by the configured country/language filters.");
                 }
 
                 var normalizedMediaType =
@@ -286,22 +284,49 @@ public sealed class CatalogSelectionService
         return parsed > DateOnly.FromDateTime(DateTime.UtcNow);
     }
 
-    private static bool IsIndian(DiscoverCatalogItem item)
+    private static (HashSet<string> Countries, HashSet<string> Languages) GetExclusionPolicy()
     {
-        if (item.OriginCountries.Any(
-                country => string.Equals(
-                    country,
-                    "IN",
-                    StringComparison.OrdinalIgnoreCase)))
+        var config = Plugin.GetConfiguration();
+
+        // New list-based settings take precedence. If they have never been saved,
+        // preserve the old India filter behavior for seamless migration.
+        IEnumerable<string> countries = config.DiscoverExcludedCountries is not null
+            ? config.DiscoverExcludedCountries
+            : (Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.DiscoverExcludeIndia))
+                ? new[] { "IN" }
+                : Array.Empty<string>());
+
+        IEnumerable<string> languages = config.DiscoverExcludedLanguages is not null
+            ? config.DiscoverExcludedLanguages
+            : (Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.DiscoverExcludeIndia))
+                ? IndianLanguages
+                : Array.Empty<string>());
+
+        return (NormalizeCodes(countries), NormalizeCodes(languages));
+    }
+
+    private static HashSet<string> NormalizeCodes(IEnumerable<string> values)
+    {
+        return values
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsExcluded(
+        DiscoverCatalogItem item,
+        HashSet<string> excludedCountries,
+        HashSet<string> excludedLanguages)
+    {
+        if (item.OriginCountries.Any(excludedCountries.Contains))
         {
             return true;
         }
 
         return !string.IsNullOrWhiteSpace(item.OriginalLanguage)
-            && IndianLanguages.Contains(item.OriginalLanguage);
+            && excludedLanguages.Contains(item.OriginalLanguage);
     }
-
-    private static string BuildTargetPath(
+private static string BuildTargetPath(
         string mediaType,
         DiscoverCatalogItem item)
     {
@@ -335,6 +360,7 @@ public sealed class CatalogSelectionService
         var canonical = new
         {
             assetProfile = Jellyfin.Plugin.JellyBridge.Services.DiscoverPosterService.AssetProfile,
+            trailerProfile = DiscoverCatalogClient.TrailerProfile,
             mediaType,
             item.TmdbId,
             item.Title,

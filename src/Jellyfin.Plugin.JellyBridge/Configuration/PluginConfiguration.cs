@@ -29,7 +29,9 @@ public class PluginConfiguration : BasePluginConfiguration
         { nameof(DiscoverMovieTargetCount), 1000 },
         { nameof(DiscoverSeriesTargetCount), 1000 },
         { nameof(DiscoverMinimumYear), 1990 },
-        { nameof(DiscoverExcludeIndia), true },
+        { nameof(DiscoverExcludeIndia), true }, // legacy fallback only
+        { nameof(DiscoverExcludedCountries), new List<string> { "IN" } },
+        { nameof(DiscoverExcludedLanguages), new List<string> { "hi", "ta", "te", "ml", "kn", "bn", "mr", "gu", "pa" } },
 
         // Discover / Sync Settings
         { nameof(Region), "US" },
@@ -168,6 +170,18 @@ public class PluginConfiguration : BasePluginConfiguration
     /// from the Discover working set when catalog metadata identifies them.
     /// </summary>
     public bool? DiscoverExcludeIndia { get; set; }
+
+    /// <summary>
+    /// Gets or sets ISO 3166-1 alpha-2 origin-country codes excluded from Discover selection.
+    /// An empty list means no country exclusions.
+    /// </summary>
+    public List<string>? DiscoverExcludedCountries { get; set; }
+
+    /// <summary>
+    /// Gets or sets ISO 639-1 original-language codes excluded from Discover selection.
+    /// An empty list means no language exclusions.
+    /// </summary>
+    public List<string>? DiscoverExcludedLanguages { get; set; }
 
     /// <summary>
     /// Gets or sets the timeout in minutes for plugin tasks before cancelling.

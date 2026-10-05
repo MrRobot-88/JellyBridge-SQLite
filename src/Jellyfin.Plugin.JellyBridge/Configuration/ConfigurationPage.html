@@ -44,6 +44,53 @@
                     font-style: italic;
                 }
                 
+                /* SQLite Discover country/language exclusion lists */
+                details.discoverFilterDetails {
+                    margin: 12px 0;
+                    border: 1px solid rgba(155, 155, 155, 0.3);
+                    border-radius: 6px;
+                    overflow: hidden;
+                }
+                details.discoverFilterDetails > summary {
+                    text-align: left;
+                    outline: none;
+                    padding: 12px;
+                    background: rgba(0, 0, 0, 0.08);
+                    font-weight: bold;
+                }
+                .discoverFilterBody {
+                    padding: 12px;
+                }
+                .discoverFilterSearch {
+                    width: 100%;
+                    box-sizing: border-box;
+                    margin: 8px 0 10px 0;
+                }
+                .discoverFilterActions {
+                    display: flex;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                    margin-bottom: 10px;
+                }
+                .discoverFilterGrid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+                    gap: 4px 10px;
+                    max-height: 300px;
+                    overflow-y: auto;
+                    padding: 8px;
+                    border: 1px solid rgba(155, 155, 155, 0.25);
+                    border-radius: 4px;
+                }
+                .discoverFilterItem {
+                    margin: 0;
+                    padding: 5px 3px;
+                }
+                .discoverFilterCode {
+                    opacity: .65;
+                    font-size: .85em;
+                    margin-left: 5px;
+                }
                 /* Multi-select styling */
                 .multiSelectContainer {
                     display: flex;
@@ -726,21 +773,21 @@
 
                     <br>
 
-                    <details id="syncSettings">
-                        <summary>SQLite Discover Catalog</summary>
+                    <details id="syncSettings" open>
+                        <summary>Discover Library Size & Sync</summary>
                         <br>
                         <div class="fieldDescription" style="margin-bottom: 16px;">
-                            Configure the SQLite-backed Discover working set. Catalog selection is independent of Seerr/Jellyseerr; Seerr is used only for favorite → request integration.
+                            Choose how many of the highest-ranked eligible titles you want in Discover. Enter any value from 0 to 50,000 for movies and series, then use Save & Sync below. No PuTTY is required.
                         </div>
 
                         <div class="inputContainer">
-                            <input id="DiscoverMovieTargetCount" type="number" is="emby-input" min="0" max="50000" label="Discover Movies target"/>
-                            <div class="fieldDescription">Desired number of movies materialized from the SQLite catalog. Use a small value while testing; scale up in controlled stages.</div>
+                            <input id="DiscoverMovieTargetCount" type="number" is="emby-input" min="0" max="50000" label="Movies target (top ranked)"/>
+                            <div class="fieldDescription">Example: 100, 10000, 30000 or 50000. JellyBridge selects the first eligible movies in catalog rank/popularity order.</div>
                         </div>
 
                         <div class="inputContainer">
-                            <input id="DiscoverSeriesTargetCount" type="number" is="emby-input" min="0" max="50000" label="Discover Series target"/>
-                            <div class="fieldDescription">Desired number of series materialized from the SQLite catalog.</div>
+                            <input id="DiscoverSeriesTargetCount" type="number" is="emby-input" min="0" max="50000" label="Series target (top ranked)"/>
+                            <div class="fieldDescription">Example: 100, 10000 or 50000. JellyBridge selects the first eligible series in catalog rank/popularity order.</div>
                         </div>
 
                         <div class="inputContainer">
@@ -748,17 +795,31 @@
                             <div class="fieldDescription">Catalog selection policy. Titles older than this year are excluded from the Discover working set.</div>
                         </div>
 
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input id="DiscoverExcludeIndia" type="checkbox" is="emby-checkbox" data-embycheckbox="true" class="emby-checkbox" />
-                                <span class="checkboxLabel">Exclude India / Indian-language catalog titles</span>
-                                <span class="checkboxOutline">
-                                    <span class="material-icons checkboxIcon checkboxIcon-checked check" aria-hidden="true"></span>
-                                    <span class="material-icons checkboxIcon checkboxIcon-unchecked" aria-hidden="true"></span>
-                                </span>
-                            </label>
-                            <div class="fieldDescription">Applies only when the SQLite catalog metadata identifies the title as matching this exclusion policy.</div>
-                        </div>
+                        <details id="discoverCountryFilterDetails" class="discoverFilterDetails">
+                            <summary>🌍 Exclude countries (<span id="DiscoverExcludedCountriesCount">0</span> selected)</summary>
+                            <div class="discoverFilterBody">
+                                <div class="fieldDescription">Checked countries are excluded when a catalog title lists that origin country. Uncheck a country to allow it again.</div>
+                                <input id="DiscoverCountryFilterSearch" type="text" is="emby-input" class="discoverFilterSearch" placeholder="Search country name or ISO code..." />
+                                <div class="discoverFilterActions">
+                                    <button type="button" id="clearExcludedCountries" is="emby-button" class="raised emby-button">Allow all countries</button>
+                                    <button type="button" id="selectIndiaCountryPreset" is="emby-button" class="raised emby-button">Exclude India</button>
+                                </div>
+                                <div id="DiscoverExcludedCountries" class="discoverFilterGrid"></div>
+                            </div>
+                        </details>
+
+                        <details id="discoverLanguageFilterDetails" class="discoverFilterDetails">
+                            <summary>🗣️ Exclude original languages (<span id="DiscoverExcludedLanguagesCount">0</span> selected)</summary>
+                            <div class="discoverFilterBody">
+                                <div class="fieldDescription">Checked original languages are excluded regardless of production country. This lets you fine-tune the selection independently from country filters.</div>
+                                <input id="DiscoverLanguageFilterSearch" type="text" is="emby-input" class="discoverFilterSearch" placeholder="Search language name or ISO code..." />
+                                <div class="discoverFilterActions">
+                                    <button type="button" id="clearExcludedLanguages" is="emby-button" class="raised emby-button">Allow all languages</button>
+                                    <button type="button" id="selectIndianLanguagePreset" is="emby-button" class="raised emby-button">Exclude Indian languages</button>
+                                </div>
+                                <div id="DiscoverExcludedLanguages" class="discoverFilterGrid"></div>
+                            </div>
+                        </details>
                         <div class="inputContainer" id="regionContainer" style="display: none;">
                             <div style="display: flex; align-items: center; gap: 10px;">
                                 <div style="flex: 1;">
@@ -832,7 +893,7 @@
 
                         <div>
                             <button is="emby-button" type="button" id="syncDiscover" class="raised button block emby-button">
-                                <span>🗃️ Sync SQLite Discover Now</span>
+                                <span>💾 Save Targets & Sync Discover Now</span>
                             </button>
                             <div id="syncDiscoverResult" class="testResult emby-textarea"></div>
                         </div>
