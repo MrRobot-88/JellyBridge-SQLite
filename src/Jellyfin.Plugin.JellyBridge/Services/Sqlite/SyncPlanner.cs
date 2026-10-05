@@ -11,7 +11,10 @@ public sealed class SyncPlanner
         IReadOnlyDictionary<BridgeItemKey, MaterializedItemState> materializedItems)
     {
         var desiredByKey = desiredItems.ToDictionary(
-            item => new BridgeItemKey(item.MediaType, item.TmdbId, item.Tier));
+            item => new BridgeItemKey(
+                item.MediaType,
+                item.TmdbId,
+                BridgeTier.Normalize(item.Tier)));
 
         var adds = new List<DesiredBridgeItem>();
         var updates = new List<DesiredBridgeItem>();
