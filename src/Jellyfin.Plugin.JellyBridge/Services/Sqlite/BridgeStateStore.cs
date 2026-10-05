@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.JellyBridge.Services.Sqlite;
 /// </summary>
 public sealed class BridgeStateStore
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
 
     private readonly ILogger<BridgeStateStore> _logger;
     private readonly SemaphoreSlim _initializeLock = new(1, 1);
@@ -84,6 +84,7 @@ public sealed class BridgeStateStore
                 CREATE TABLE IF NOT EXISTS materialized_items (
                     media_type TEXT NOT NULL,
                     tmdb_id INTEGER NOT NULL,
+                    tier TEXT NOT NULL DEFAULT '1080p',
                     target_path TEXT NOT NULL,
                     fingerprint TEXT NOT NULL,
                     materialization_state TEXT NOT NULL,
@@ -91,7 +92,7 @@ public sealed class BridgeStateStore
                     first_seen_utc TEXT NOT NULL,
                     last_seen_utc TEXT NOT NULL,
                     last_materialized_utc TEXT NULL,
-                    PRIMARY KEY (media_type, tmdb_id)
+                    PRIMARY KEY (media_type, tmdb_id, tier)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_materialized_items_generation
@@ -120,6 +121,8 @@ public sealed class BridgeStateStore
                 """,
                 cancellationToken).ConfigureAwait(false);
 
+            await EnsureMaterializedItemsTierSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
+
             await using (var command = connection.CreateCommand())
             {
                 command.CommandText = $"PRAGMA user_version={SchemaVersion};";
@@ -131,7 +134,7 @@ public sealed class BridgeStateStore
                 command.CommandText =
                     """
                     INSERT INTO bridge_meta(key, value)
-                    VALUES('state_model', 'sqlite-first-v1')
+                    VALUES('state_model', 'sqlite-first-v2-tiered')
                     ON CONFLICT(key) DO UPDATE SET value=excluded.value;
                     """;
 
@@ -170,6 +173,7 @@ public sealed class BridgeStateStore
             SELECT
                 media_type,
                 tmdb_id,
+                tier,
                 target_path,
                 fingerprint,
                 materialization_state,
@@ -190,12 +194,13 @@ public sealed class BridgeStateStore
                 reader.GetString(2),
                 reader.GetString(3),
                 reader.GetString(4),
-                reader.GetInt64(5),
-                reader.GetString(6),
+                reader.GetString(5),
+                reader.GetInt64(6),
                 reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8));
+                reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9));
 
-            result[new BridgeItemKey(state.MediaType, state.TmdbId)] = state;
+            result[new BridgeItemKey(state.MediaType, state.TmdbId, state.Tier)] = state;
         }
 
         return result;
@@ -220,6 +225,7 @@ public sealed class BridgeStateStore
             INSERT INTO materialized_items (
                 media_type,
                 tmdb_id,
+                tier,
                 target_path,
                 fingerprint,
                 materialization_state,
@@ -231,6 +237,7 @@ public sealed class BridgeStateStore
             VALUES (
                 $media_type,
                 $tmdb_id,
+                $tier,
                 $target_path,
                 $fingerprint,
                 $materialization_state,
@@ -239,7 +246,7 @@ public sealed class BridgeStateStore
                 $last_seen_utc,
                 $last_materialized_utc
             )
-            ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+            ON CONFLICT(media_type, tmdb_id, tier) DO UPDATE SET
                 target_path=excluded.target_path,
                 fingerprint=excluded.fingerprint,
                 materialization_state=excluded.materialization_state,
@@ -250,6 +257,7 @@ public sealed class BridgeStateStore
 
         command.Parameters.AddWithValue("$media_type", item.MediaType);
         command.Parameters.AddWithValue("$tmdb_id", item.TmdbId);
+        command.Parameters.AddWithValue("$tier", item.Tier);
         command.Parameters.AddWithValue("$target_path", item.TargetPath);
         command.Parameters.AddWithValue("$fingerprint", item.Fingerprint);
         command.Parameters.AddWithValue("$materialization_state", item.MaterializationState);
@@ -276,15 +284,80 @@ public sealed class BridgeStateStore
             """
             DELETE FROM materialized_items
             WHERE media_type=$media_type
-              AND tmdb_id=$tmdb_id;
+              AND tmdb_id=$tmdb_id
+              AND tier=$tier;
             """;
 
         command.Parameters.AddWithValue("$media_type", key.MediaType);
         command.Parameters.AddWithValue("$tmdb_id", key.TmdbId);
+        command.Parameters.AddWithValue("$tier", key.Tier);
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    private static async Task EnsureMaterializedItemsTierSchemaAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info(materialized_items);";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                columns.Add(reader.GetString(1));
+            }
+        }
+
+        if (columns.Contains("tier"))
+        {
+            return;
+        }
+
+        await ExecuteNonQueryAsync(
+            connection,
+            """
+            BEGIN IMMEDIATE;
+            DROP INDEX IF EXISTS idx_materialized_items_generation;
+            DROP INDEX IF EXISTS idx_materialized_items_state;
+            ALTER TABLE materialized_items RENAME TO materialized_items_v1;
+
+            CREATE TABLE materialized_items (
+                media_type TEXT NOT NULL,
+                tmdb_id INTEGER NOT NULL,
+                tier TEXT NOT NULL DEFAULT '1080p',
+                target_path TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                materialization_state TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                first_seen_utc TEXT NOT NULL,
+                last_seen_utc TEXT NOT NULL,
+                last_materialized_utc TEXT NULL,
+                PRIMARY KEY (media_type, tmdb_id, tier)
+            );
+
+            INSERT INTO materialized_items (
+                media_type, tmdb_id, tier, target_path, fingerprint,
+                materialization_state, generation, first_seen_utc,
+                last_seen_utc, last_materialized_utc
+            )
+            SELECT
+                media_type, tmdb_id, '1080p', target_path, fingerprint,
+                materialization_state, generation, first_seen_utc,
+                last_seen_utc, last_materialized_utc
+            FROM materialized_items_v1;
+
+            DROP TABLE materialized_items_v1;
+
+            CREATE INDEX idx_materialized_items_generation
+                ON materialized_items(generation);
+            CREATE INDEX idx_materialized_items_state
+                ON materialized_items(materialization_state);
+            COMMIT;
+            """,
+            cancellationToken).ConfigureAwait(false);
+    }
     private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new SqliteConnection(
@@ -311,11 +384,12 @@ public sealed class BridgeStateStore
     }
 }
 
-public readonly record struct BridgeItemKey(string MediaType, long TmdbId);
+public readonly record struct BridgeItemKey(string MediaType, long TmdbId, string Tier);
 
 public sealed record MaterializedItemState(
     string MediaType,
     long TmdbId,
+    string Tier,
     string TargetPath,
     string Fingerprint,
     string MaterializationState,

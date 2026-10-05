@@ -16,6 +16,9 @@ namespace Jellyfin.Plugin.JellyBridge.Services.Catalog;
 /// </summary>
 public sealed class CatalogSelectionService
 {
+    public const string DefaultTier = "1080p";
+    public const string FourK = "4k";
+
     private static readonly HashSet<string> IndianLanguages =
         new(StringComparer.OrdinalIgnoreCase)
         {
@@ -36,7 +39,8 @@ public sealed class CatalogSelectionService
     public async Task<IReadOnlyList<DesiredCatalogItem>> GetDesiredAsync(
         string mediaType,
         int targetCount,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string tier = DefaultTier)
     {
         if (targetCount <= 0)
         {
@@ -53,6 +57,8 @@ public sealed class CatalogSelectionService
             || string.Equals(mediaType, "series", StringComparison.OrdinalIgnoreCase)
                 ? "tv"
                 : "movie";
+        var normalizedTier = NormalizeTier(tier);
+
 
         var ownedSnapshot = await _catalog.GetOwnedMediaAsync(
             cancellationToken).ConfigureAwait(false);
@@ -127,6 +133,7 @@ public sealed class CatalogSelectionService
 
                 var targetPath = BuildTargetPath(
                     normalizedMediaType,
+                    normalizedTier,
                     item);
 
                 var fingerprint = BuildFingerprint(
@@ -137,6 +144,7 @@ public sealed class CatalogSelectionService
                     new DesiredCatalogItem(
                         normalizedMediaType,
                         item.TmdbId,
+                        normalizedTier,
                         targetPath,
                         fingerprint,
                         item));
@@ -176,7 +184,8 @@ public sealed class CatalogSelectionService
         long tmdbId,
         int? year,
         string? letter,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string tier = DefaultTier)
     {
         if (tmdbId <= 0)
         {
@@ -195,6 +204,8 @@ public sealed class CatalogSelectionService
             || string.Equals(mediaType, "series", StringComparison.OrdinalIgnoreCase)
                 ? "tv"
                 : "movie";
+        var normalizedTier = NormalizeTier(tier);
+
 
         var ownedSnapshot = await _catalog.GetOwnedMediaAsync(
             cancellationToken).ConfigureAwait(false);
@@ -270,7 +281,8 @@ public sealed class CatalogSelectionService
                 var desired = new DesiredCatalogItem(
                     normalizedMediaType,
                     item.TmdbId,
-                    BuildTargetPath(normalizedMediaType, item),
+                    normalizedTier,
+                    BuildTargetPath(normalizedMediaType, normalizedTier, item),
                     BuildFingerprint(normalizedMediaType, item),
                     item);
 
@@ -357,15 +369,32 @@ public sealed class CatalogSelectionService
         return !string.IsNullOrWhiteSpace(item.OriginalLanguage)
             && excludedLanguages.Contains(item.OriginalLanguage);
     }
+    private static string NormalizeTier(string? tier)
+    {
+        if (string.Equals(tier, FourK, StringComparison.OrdinalIgnoreCase))
+        {
+            return FourK;
+        }
+
+        if (string.IsNullOrWhiteSpace(tier)
+            || string.Equals(tier, DefaultTier, StringComparison.OrdinalIgnoreCase))
+        {
+            return DefaultTier;
+        }
+
+        throw new ArgumentOutOfRangeException(nameof(tier), tier, "Discover tier must be '1080p' or '4k'.");
+    }
 private static string BuildTargetPath(
         string mediaType,
+        string tier,
         DiscoverCatalogItem item)
     {
         var baseDirectory = FolderUtils.GetBaseDirectory();
 
+        var is4k = string.Equals(tier, FourK, StringComparison.Ordinal);
         var mediaDirectory = mediaType == "tv"
-            ? "Shows"
-            : "Movies";
+            ? (is4k ? "Shows 4K" : "Shows")
+            : (is4k ? "Movies 4K" : "Movies");
 
         var safeTitle = FolderUtils.SanitizeFileName(
             string.IsNullOrWhiteSpace(item.Title)
@@ -420,10 +449,11 @@ private static string BuildTargetPath(
 public sealed record DesiredCatalogItem(
     string MediaType,
     long TmdbId,
+    string Tier,
     string TargetPath,
     string Fingerprint,
     DiscoverCatalogItem CatalogItem)
 {
     public DesiredBridgeItem ToPlannerItem() =>
-        new(MediaType, TmdbId, TargetPath, Fingerprint);
+        new(MediaType, TmdbId, Tier, TargetPath, Fingerprint);
 }

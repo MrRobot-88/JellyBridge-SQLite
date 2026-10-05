@@ -72,7 +72,7 @@ public sealed class SqliteProductionSyncService
         var desiredCatalog = movies.Concat(series).ToArray();
         var desiredPlanner = desiredCatalog.Select(item => item.ToPlannerItem()).ToArray();
         var desiredByKey = desiredCatalog.ToDictionary(
-            item => new BridgeItemKey(item.MediaType, item.TmdbId));
+            item => new BridgeItemKey(item.MediaType, item.TmdbId, item.Tier));
 
         var plan = _planner.Build(desiredPlanner, current);
         var generation = current.Count == 0
@@ -108,7 +108,7 @@ public sealed class SqliteProductionSyncService
         foreach (var add in plan.Adds)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var key = new BridgeItemKey(add.MediaType, add.TmdbId);
+            var key = new BridgeItemKey(add.MediaType, add.TmdbId, add.Tier);
             var item = desiredByKey[key];
 
             var result = await _materializer
@@ -123,7 +123,7 @@ public sealed class SqliteProductionSyncService
         foreach (var update in plan.Updates)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var key = new BridgeItemKey(update.MediaType, update.TmdbId);
+            var key = new BridgeItemKey(update.MediaType, update.TmdbId, update.Tier);
             var item = desiredByKey[key];
             var previous = current[key];
 

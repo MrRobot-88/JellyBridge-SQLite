@@ -46,13 +46,13 @@ public sealed class SqliteMaterializerService
     {
         ValidateIdentity(item, previous);
 
-        var targetPath = GetManagedPath(item.MediaType, item.TargetPath);
+        var targetPath = GetManagedPath(item.MediaType, item.Tier, item.TargetPath);
         ValidateFolderIdentity(targetPath, item.TmdbId);
 
         string? previousPath = null;
         if (previous is not null)
         {
-            previousPath = GetManagedPath(previous.MediaType, previous.TargetPath);
+            previousPath = GetManagedPath(previous.MediaType, previous.Tier, previous.TargetPath);
             ValidateFolderIdentity(previousPath, previous.TmdbId);
         }
 
@@ -64,10 +64,10 @@ public sealed class SqliteMaterializerService
         var token = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
         var stagePath = Path.Combine(
             parent,
-            $".jellybridge-stage-{item.MediaType}-{item.TmdbId}-{token}");
+            $".jellybridge-stage-{item.MediaType}-{item.Tier}-{item.TmdbId}-{token}");
         var backupPath = Path.Combine(
             parent,
-            $".jellybridge-backup-{item.MediaType}-{item.TmdbId}-{token}");
+            $".jellybridge-backup-{item.MediaType}-{item.Tier}-{item.TmdbId}-{token}");
 
         if (Directory.Exists(stagePath) || Directory.Exists(backupPath))
         {
@@ -169,6 +169,7 @@ public sealed class SqliteMaterializerService
                 new MaterializedItemState(
                     item.MediaType,
                     item.TmdbId,
+                    item.Tier,
                     targetPath,
                     item.Fingerprint,
                     MaterializedState,
@@ -189,6 +190,7 @@ public sealed class SqliteMaterializerService
             return new SqliteMaterializationResult(
                 item.MediaType,
                 item.TmdbId,
+                item.Tier,
                 targetPath,
                 previousPath,
                 previous is null ? "add" : "update");
@@ -265,14 +267,14 @@ public sealed class SqliteMaterializerService
         MaterializedItemState state,
         CancellationToken cancellationToken = default)
     {
-        var targetPath = GetManagedPath(state.MediaType, state.TargetPath);
+        var targetPath = GetManagedPath(state.MediaType, state.Tier, state.TargetPath);
         ValidateFolderIdentity(targetPath, state.TmdbId);
         ValidateOwnedState(state);
 
         if (!Directory.Exists(targetPath))
         {
             await _stateStore.DeleteMaterializedItemAsync(
-                new BridgeItemKey(state.MediaType, state.TmdbId),
+                new BridgeItemKey(state.MediaType, state.TmdbId, state.Tier),
                 cancellationToken).ConfigureAwait(false);
 
             _logger.LogWarning(
@@ -284,6 +286,7 @@ public sealed class SqliteMaterializerService
             return new SqliteRemovalResult(
                 state.MediaType,
                 state.TmdbId,
+                state.Tier,
                 targetPath,
                 false);
         }
@@ -295,7 +298,7 @@ public sealed class SqliteMaterializerService
 
         var tombstone = Path.Combine(
             parent,
-            $".jellybridge-delete-{state.MediaType}-{state.TmdbId}-{Guid.NewGuid():N}");
+            $".jellybridge-delete-{state.MediaType}-{state.Tier}-{state.TmdbId}-{Guid.NewGuid():N}");
 
         Directory.Move(targetPath, tombstone);
 
@@ -304,7 +307,7 @@ public sealed class SqliteMaterializerService
             Directory.Delete(tombstone, recursive: true);
 
             await _stateStore.DeleteMaterializedItemAsync(
-                new BridgeItemKey(state.MediaType, state.TmdbId),
+                new BridgeItemKey(state.MediaType, state.TmdbId, state.Tier),
                 cancellationToken).ConfigureAwait(false);
         }
         catch
@@ -337,6 +340,7 @@ public sealed class SqliteMaterializerService
         return new SqliteRemovalResult(
             state.MediaType,
             state.TmdbId,
+            state.Tier,
             targetPath,
             true);
     }
@@ -356,7 +360,8 @@ public sealed class SqliteMaterializerService
         }
 
         if (!string.Equals(item.MediaType, previous.MediaType, StringComparison.Ordinal)
-            || item.TmdbId != previous.TmdbId)
+            || item.TmdbId != previous.TmdbId
+            || !string.Equals(item.Tier, previous.Tier, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("SQLite update identity does not match existing state.");
         }
@@ -374,15 +379,21 @@ public sealed class SqliteMaterializerService
         }
     }
 
-    private static string GetManagedPath(string mediaType, string path)
+    private static string GetManagedPath(string mediaType, string tier, string path)
     {
         var basePath = Path.GetFullPath(FolderUtils.GetBaseDirectory());
+        var is4k = string.Equals(tier, CatalogSelectionService.FourK, StringComparison.OrdinalIgnoreCase);
+        if (!is4k && !string.Equals(tier, CatalogSelectionService.DefaultTier, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Unknown Discover tier '{tier}'.");
+        }
+
         var mediaRoot = Path.GetFullPath(
             Path.Combine(
                 basePath,
                 string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
-                    ? "Shows"
-                    : "Movies"));
+                    ? (is4k ? "Shows 4K" : "Shows")
+                    : (is4k ? "Movies 4K" : "Movies")));
 
         var fullPath = Path.GetFullPath(path);
         var prefix = mediaRoot.EndsWith(Path.DirectorySeparatorChar)
@@ -441,7 +452,7 @@ public sealed class SqliteMaterializerService
 
     private static void DeleteOwnedDirectory(MaterializedItemState state)
     {
-        var path = GetManagedPath(state.MediaType, state.TargetPath);
+        var path = GetManagedPath(state.MediaType, state.Tier, state.TargetPath);
         ValidateFolderIdentity(path, state.TmdbId);
         ValidateOwnedState(state);
         ValidateOwnedDirectory(state, path);
@@ -586,6 +597,7 @@ public sealed class SqliteMaterializerService
 public sealed record SqliteMaterializationResult(
     string MediaType,
     long TmdbId,
+    string Tier,
     string TargetPath,
     string? PreviousPath,
     string Operation);
@@ -593,5 +605,6 @@ public sealed record SqliteMaterializationResult(
 public sealed record SqliteRemovalResult(
     string MediaType,
     long TmdbId,
+    string Tier,
     string TargetPath,
     bool DirectoryDeleted);

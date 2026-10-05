@@ -40,7 +40,7 @@ public sealed class SqlitePilotAdoptionService
             .GetMaterializedItemsAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        var key = new BridgeItemKey("movie", PilotTmdbId);
+        var key = new BridgeItemKey("movie", PilotTmdbId, CatalogSelectionService.DefaultTier);
 
         if (state.Count != 1 || !state.TryGetValue(key, out var previous))
         {

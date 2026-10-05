@@ -141,6 +141,7 @@ public sealed class SqlitePilotMaterializerService
                 new MaterializedItemState(
                     item.MediaType,
                     item.TmdbId,
+                    item.Tier,
                     item.TargetPath,
                     item.Fingerprint,
                     "pilot-materialized",
