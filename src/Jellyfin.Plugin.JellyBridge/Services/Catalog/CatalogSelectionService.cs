@@ -48,6 +48,22 @@ public sealed class CatalogSelectionService
 
         var (excludedCountries, excludedLanguages) = GetExclusionPolicy();
 
+        var normalizedMediaType =
+            string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(mediaType, "series", StringComparison.OrdinalIgnoreCase)
+                ? "tv"
+                : "movie";
+
+        var ownedSnapshot = await _catalog.GetOwnedMediaAsync(
+            cancellationToken).ConfigureAwait(false);
+
+        var ownedTmdbIds = (normalizedMediaType == "tv"
+                ? ownedSnapshot.Series
+                : ownedSnapshot.Movies)
+            .ToHashSet();
+
+        var ownedSkipped = 0;
+
         var result = new List<DesiredCatalogItem>(targetCount);
         var seen = new HashSet<long>();
 
@@ -83,6 +99,12 @@ public sealed class CatalogSelectionService
                     continue;
                 }
 
+                if (ownedTmdbIds.Contains(item.TmdbId))
+                {
+                    ownedSkipped++;
+                    continue;
+                }
+
                 if (!item.Year.HasValue || item.Year.Value < minimumYear)
                 {
                     continue;
@@ -102,12 +124,6 @@ public sealed class CatalogSelectionService
                 {
                     continue;
                 }
-
-                var normalizedMediaType =
-                    string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(mediaType, "series", StringComparison.OrdinalIgnoreCase)
-                        ? "tv"
-                        : "movie";
 
                 var targetPath = BuildTargetPath(
                     normalizedMediaType,
@@ -130,12 +146,14 @@ public sealed class CatalogSelectionService
         }
 
         _logger.LogInformation(
-            "Catalog desired set built: media={MediaType}, target={Target}, selected={Selected}, scanned={Scanned}, catalogTotal={Total}",
+            "Catalog desired set built: media={MediaType}, target={Target}, selected={Selected}, scanned={Scanned}, catalogTotal={Total}, ownedAvailable={OwnedAvailable}, ownedSkipped={OwnedSkipped}",
             mediaType,
             targetCount,
             result.Count,
             offset,
-            total);
+            total,
+            ownedTmdbIds.Count,
+            ownedSkipped);
 
         if (result.Count < targetCount)
         {
@@ -172,6 +190,20 @@ public sealed class CatalogSelectionService
 
         var (excludedCountries, excludedLanguages) = GetExclusionPolicy();
 
+        var normalizedMediaType =
+            string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(mediaType, "series", StringComparison.OrdinalIgnoreCase)
+                ? "tv"
+                : "movie";
+
+        var ownedSnapshot = await _catalog.GetOwnedMediaAsync(
+            cancellationToken).ConfigureAwait(false);
+
+        var ownedTmdbIds = (normalizedMediaType == "tv"
+                ? ownedSnapshot.Series
+                : ownedSnapshot.Movies)
+            .ToHashSet();
+
         var offset = 0;
         var total = int.MaxValue;
 
@@ -200,6 +232,11 @@ public sealed class CatalogSelectionService
 
             if (item is not null)
             {
+                if (ownedTmdbIds.Contains(item.TmdbId))
+                {
+                    throw new InvalidOperationException(
+                        $"TMDB {tmdbId} is already present in the normal media library and is excluded from Discover.");
+                }
                 if (!item.Year.HasValue || item.Year.Value < minimumYear)
                 {
                     throw new InvalidOperationException(
@@ -229,12 +266,6 @@ public sealed class CatalogSelectionService
                     throw new InvalidOperationException(
                         $"TMDB {tmdbId} was found but is excluded by the configured country/language filters.");
                 }
-
-                var normalizedMediaType =
-                    string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(mediaType, "series", StringComparison.OrdinalIgnoreCase)
-                        ? "tv"
-                        : "movie";
 
                 var desired = new DesiredCatalogItem(
                     normalizedMediaType,

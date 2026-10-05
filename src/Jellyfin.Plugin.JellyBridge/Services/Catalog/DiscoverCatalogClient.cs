@@ -168,6 +168,44 @@ public sealed class DiscoverCatalogClient
         return page;
     }
 
+    public async Task<DiscoverOwnedMediaSnapshot> GetOwnedMediaAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var baseUrl = Plugin.GetConfigOrDefault<string>(
+            nameof(PluginConfiguration.DiscoverCatalogUrl));
+
+        var url = $"{baseUrl.TrimEnd('/')}/owned";
+
+        using var response = await _httpClient.GetAsync(
+            url,
+            cancellationToken).ConfigureAwait(false);
+
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content
+            .ReadAsStreamAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var snapshot = await JsonSerializer.DeserializeAsync<DiscoverOwnedMediaSnapshot>(
+            stream,
+            JsonOptions,
+            cancellationToken).ConfigureAwait(false);
+
+        if (snapshot is null)
+        {
+            throw new InvalidOperationException(
+                "Discover Catalog returned an empty ownership snapshot.");
+        }
+
+        _logger.LogInformation(
+            "Discover ownership snapshot: movies={Movies}, series={Series}, scanned={Scanned}, source={Source}",
+            snapshot.MovieCount,
+            snapshot.SeriesCount,
+            snapshot.Scanned,
+            snapshot.Source);
+
+        return snapshot;
+    }
     public async Task<DiscoverTrailerResult?> GetTrailerAsync(
         string mediaType,
         long tmdbId,
@@ -255,6 +293,29 @@ public sealed class DiscoverCatalogPage
     public List<DiscoverCatalogItem> Items { get; set; } = new();
 }
 
+public sealed class DiscoverOwnedMediaSnapshot
+{
+    [JsonPropertyName("movies")]
+    public List<long> Movies { get; set; } = new();
+
+    [JsonPropertyName("series")]
+    public List<long> Series { get; set; } = new();
+
+    [JsonPropertyName("movieCount")]
+    public int MovieCount { get; set; }
+
+    [JsonPropertyName("seriesCount")]
+    public int SeriesCount { get; set; }
+
+    [JsonPropertyName("scanned")]
+    public int Scanned { get; set; }
+
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = string.Empty;
+
+    [JsonPropertyName("refreshedAtUtc")]
+    public string? RefreshedAtUtc { get; set; }
+}
 public sealed class DiscoverTrailerResult
 {
     [JsonPropertyName("mediaType")]
