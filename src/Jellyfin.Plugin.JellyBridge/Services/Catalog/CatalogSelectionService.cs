@@ -334,6 +334,7 @@ public sealed class CatalogSelectionService
     {
         var canonical = new
         {
+            assetProfile = Jellyfin.Plugin.JellyBridge.Services.DiscoverPosterService.AssetProfile,
             mediaType,
             item.TmdbId,
             item.Title,

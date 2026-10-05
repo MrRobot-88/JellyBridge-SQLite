@@ -107,6 +107,13 @@ public sealed class SqliteMaterializerService
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            var backdropPath = await _posterService
+                .EnsureBackdropAsync(
+                    item.CatalogItem,
+                    stagePath,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             var placeholderOk = string.Equals(
                     item.MediaType,
                     "tv",
@@ -124,7 +131,7 @@ public sealed class SqliteMaterializerService
                     $"Placeholder generation failed for {item.MediaType} TMDB {item.TmdbId}.");
             }
 
-            ValidateStage(item, stagePath, nfoPath, posterPath);
+            ValidateStage(item, stagePath, nfoPath, posterPath, backdropPath);
 
             if (Directory.Exists(targetPath))
             {
@@ -518,7 +525,8 @@ public sealed class SqliteMaterializerService
         DesiredCatalogItem item,
         string stagePath,
         string nfoPath,
-        string posterPath)
+        string posterPath,
+        string? backdropPath)
     {
         if (!File.Exists(nfoPath) || new FileInfo(nfoPath).Length == 0)
         {
@@ -528,6 +536,12 @@ public sealed class SqliteMaterializerService
         if (!File.Exists(posterPath) || new FileInfo(posterPath).Length == 0)
         {
             throw new InvalidOperationException($"Materialized poster is missing for TMDB {item.TmdbId}.");
+        }
+
+        if (backdropPath is not null
+            && (!File.Exists(backdropPath) || new FileInfo(backdropPath).Length == 0))
+        {
+            throw new InvalidOperationException($"Materialized backdrop is missing for TMDB {item.TmdbId}.");
         }
 
         var placeholders = Directory
