@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using Jellyfin.Plugin.JellyBridge.Services.Catalog;
 using Jellyfin.Plugin.JellyBridge.Services.Sqlite;
@@ -103,19 +104,29 @@ public sealed class SqliteMaterializerService
                 stagePath,
                 cancellationToken).ConfigureAwait(false);
 
-            var posterPath = await _posterService
-                .EnsurePosterAsync(
-                    item.CatalogItem,
-                    stagePath,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            string posterPath;
+            string? backdropPath;
 
-            var backdropPath = await _posterService
-                .EnsureBackdropAsync(
-                    item.CatalogItem,
-                    stagePath,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            if (string.Equals(item.Tier, CatalogSelectionService.FourK, StringComparison.OrdinalIgnoreCase))
+            {
+                (posterPath, backdropPath) = LinkDefaultTierArtwork(item, stagePath);
+            }
+            else
+            {
+                posterPath = await _posterService
+                    .EnsurePosterAsync(
+                        item.CatalogItem,
+                        stagePath,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                backdropPath = await _posterService
+                    .EnsureBackdropAsync(
+                        item.CatalogItem,
+                        stagePath,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             var placeholderOk = string.Equals(
                     item.MediaType,
@@ -377,6 +388,64 @@ public sealed class SqliteMaterializerService
             throw new InvalidOperationException(
                 $"Refusing filesystem mutation for unrecognized ownership state '{state.MaterializationState}'.");
         }
+    }
+
+    [DllImport("libc", SetLastError = true, EntryPoint = "link")]
+    private static extern int NativeLink(string oldPath, string newPath);
+
+    private static void CreateHardLinkOrThrow(string sourcePath, string targetPath)
+    {
+        if (NativeLink(sourcePath, targetPath) != 0)
+        {
+            var errno = Marshal.GetLastWin32Error();
+            throw new IOException(
+                $"Could not hardlink Discover artwork. errno={errno}, source={sourcePath}, target={targetPath}");
+        }
+    }
+    private (string PosterPath, string? BackdropPath) LinkDefaultTierArtwork(
+        DesiredCatalogItem item,
+        string targetDirectory)
+    {
+        var basePath = Path.GetFullPath(FolderUtils.GetBaseDirectory());
+        var defaultRoot = Path.GetFullPath(Path.Combine(
+            basePath,
+            string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                ? "Shows"
+                : "Movies"));
+        var sourceDirectory = Path.Combine(defaultRoot, Path.GetFileName(item.TargetPath));
+
+        var sourcePoster = Path.Combine(sourceDirectory, DiscoverPosterService.PosterFileName);
+        if (!File.Exists(sourcePoster) || new FileInfo(sourcePoster).Length <= 0)
+        {
+            throw new InvalidOperationException(
+                $"4K Discover requires existing 1080p poster for TMDB {item.TmdbId}: {sourcePoster}");
+        }
+
+        var targetPoster = Path.Combine(targetDirectory, DiscoverPosterService.PosterFileName);
+        CreateHardLinkOrThrow(sourcePoster, targetPoster);
+
+        string? targetBackdrop = null;
+        var sourceBackdrop = Path.Combine(sourceDirectory, DiscoverPosterService.BackdropFileName);
+        if (File.Exists(sourceBackdrop) && new FileInfo(sourceBackdrop).Length > 0)
+        {
+            targetBackdrop = Path.Combine(targetDirectory, DiscoverPosterService.BackdropFileName);
+            CreateHardLinkOrThrow(sourceBackdrop, targetBackdrop);
+        }
+        else if (!string.IsNullOrWhiteSpace(item.CatalogItem.BackdropPath))
+        {
+            throw new InvalidOperationException(
+                $"4K Discover refuses duplicate backdrop download because 1080p backdrop is missing for TMDB {item.TmdbId}: {sourceBackdrop}");
+        }
+
+        _logger.LogDebug(
+            "SQLITE 4K ARTWORK HARDLINKED | Media={MediaType} | TMDB={TmdbId} | Poster={Poster} | Backdrop={Backdrop} | Source={Source}",
+            item.MediaType,
+            item.TmdbId,
+            targetPoster,
+            targetBackdrop ?? "NONE",
+            sourceDirectory);
+
+        return (targetPoster, targetBackdrop);
     }
 
     private static string GetManagedPath(string mediaType, string tier, string path)

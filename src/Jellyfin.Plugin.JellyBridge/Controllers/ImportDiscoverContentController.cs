@@ -16,12 +16,14 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
         private readonly DebugLogger<ImportDiscoverContentController> _logger;
         private readonly ApiService _apiService;
         private readonly SqliteProductionSyncService _sqliteProductionSyncService;
+        private readonly SqliteDryRunService _sqliteDryRunService;
         private readonly ITaskManager _taskManager;
 
         public ImportDiscoverContentController(
             ILoggerFactory loggerFactory,
             ApiService apiService,
             SqliteProductionSyncService sqliteProductionSyncService,
+            SqliteDryRunService sqliteDryRunService,
             ITaskManager taskManager)
         {
             _logger =
@@ -30,6 +32,7 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
 
             _apiService = apiService;
             _sqliteProductionSyncService = sqliteProductionSyncService;
+            _sqliteDryRunService = sqliteDryRunService;
             _taskManager = taskManager;
         }
 
@@ -232,6 +235,59 @@ namespace Jellyfin.Plugin.JellyBridge.Controllers
                 message = "JellyBridge SQLite sync queued in the background."
             });
         }
+        [HttpGet("DryRunDiscover")]
+        public async Task<IActionResult> DryRunDiscover()
+        {
+            _logger.LogInformation("SQLite-first Discover dry run requested.");
+
+            if (!Plugin.GetConfigOrDefault<bool>(nameof(PluginConfiguration.IsEnabled)))
+            {
+                return StatusCode(409, new
+                {
+                    success = false,
+                    sqliteFirst = true,
+                    dryRun = true,
+                    message = "JellyBridge-SQLite is disabled."
+                });
+            }
+
+            try
+            {
+                var plan = await _sqliteDryRunService
+                    .RunAsync(HttpContext.RequestAborted)
+                    .ConfigureAwait(false);
+
+                return Ok(new
+                {
+                    success = true,
+                    sqliteFirst = true,
+                    dryRun = true,
+                    filesystemWrites = false,
+                    sqliteWrites = false,
+                    tierMirror4K = true,
+                    desiredMoviesPerTier = plan.DesiredMovies,
+                    desiredSeriesPerTier = plan.DesiredSeries,
+                    existingState = plan.ExistingState,
+                    add = plan.AddCount,
+                    update = plan.UpdateCount,
+                    remove = plan.RemoveCount,
+                    unchanged = plan.UnchangedCount,
+                    totalMilliseconds = plan.TotalMilliseconds
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SQLite-first Discover dry run failed.");
+                return StatusCode(500, new
+                {
+                    success = false,
+                    sqliteFirst = true,
+                    dryRun = true,
+                    message = $"SQLite Discover dry run failed: {ex.Message}"
+                });
+            }
+        }
+
         [HttpPost("SyncDiscover")]
         public async Task<IActionResult> SyncDiscover()
         {

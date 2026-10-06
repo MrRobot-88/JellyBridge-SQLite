@@ -369,6 +369,20 @@ public sealed class CatalogSelectionService
         return !string.IsNullOrWhiteSpace(item.OriginalLanguage)
             && excludedLanguages.Contains(item.OriginalLanguage);
     }
+    public DesiredCatalogItem WithTier(DesiredCatalogItem item, string tier)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        var normalizedTier = NormalizeTier(tier);
+
+        return new DesiredCatalogItem(
+            item.MediaType,
+            item.TmdbId,
+            normalizedTier,
+            BuildTargetPath(item.MediaType, normalizedTier, item.CatalogItem),
+            item.Fingerprint,
+            item.CatalogItem);
+    }
+
     private static string NormalizeTier(string? tier)
     {
         if (string.Equals(tier, FourK, StringComparison.OrdinalIgnoreCase))

@@ -37,6 +37,7 @@ namespace Jellyfin.Plugin.JellyBridge.Services
             serviceCollection.AddTransient<SqliteMaterializerService>();
             serviceCollection.AddTransient<SqliteLibrarySyncService>();
             serviceCollection.AddTransient<SqliteProductionSyncService>();
+            serviceCollection.AddTransient<SqliteDryRunService>();
 
             // Register Jellyfin wrapper classes as transient to avoid scope disposal issues
             serviceCollection.AddTransient<JellyfinILibraryManager>(provider =>

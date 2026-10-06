@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.JellyBridge.JellyfinModels;
+using Jellyfin.Plugin.JellyBridge.Services.Catalog;
 using Jellyfin.Plugin.JellyBridge.Utils;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -9,7 +10,7 @@ namespace Jellyfin.Plugin.JellyBridge.Services;
 
 /// <summary>
 /// Production Jellyfin library integration for SQLite-first Discover output.
-/// Validates/configures the two root libraries and reports exact changed paths
+/// Validates/configures the four tiered root libraries and reports exact changed paths
 /// through ILibraryMonitor. No global library scan is used.
 /// </summary>
 public sealed class SqliteLibrarySyncService
@@ -33,9 +34,13 @@ public sealed class SqliteLibrarySyncService
         var baseDirectory = FolderUtils.GetBaseDirectory();
         var moviesPath = Path.GetFullPath(Path.Combine(baseDirectory, "Movies"));
         var showsPath = Path.GetFullPath(Path.Combine(baseDirectory, "Shows"));
+        var movies4kPath = Path.GetFullPath(Path.Combine(baseDirectory, "Movies 4K"));
+        var shows4kPath = Path.GetFullPath(Path.Combine(baseDirectory, "Shows 4K"));
 
         Directory.CreateDirectory(moviesPath);
         Directory.CreateDirectory(showsPath);
+        Directory.CreateDirectory(movies4kPath);
+        Directory.CreateDirectory(shows4kPath);
 
         var virtualFolders = _libraryManager.Inner.GetVirtualFolders(true).ToList();
 
@@ -80,66 +85,37 @@ public sealed class SqliteLibrarySyncService
             var libraryFolder = _libraryManager.Inner.GetItemById(libraryItemId) as CollectionFolder
                 ?? throw new InvalidOperationException($"Could not resolve '{libraryName}' as a Jellyfin CollectionFolder.");
 
+            // Existing Discover library configuration is intentionally not rewritten here.
+            // Step 4C only validates the library shell/path and manages the new 4K tier.
             var options = libraryFolder.GetLibraryOptions();
-            options.EnableRealtimeMonitor = false;
-            options.SaveLocalMetadata = false;
-            options.MetadataSavers = Array.Empty<string>();
-            options.DisabledLocalMetadataReaders = Array.Empty<string>();
-            options.LocalMetadataReaderOrder = ["Nfo"];
-
-            var typeOptions = options.TypeOptions?
-                .Where(option => !string.Equals(option.Type, itemType, StringComparison.OrdinalIgnoreCase))
-                .ToList()
-                ?? new List<TypeOptions>();
-
-            typeOptions.Add(new TypeOptions
+            if (options.EnableRealtimeMonitor
+                || options.SaveLocalMetadata
+                || options.MetadataSavers?.Length > 0
+                || options.LocalMetadataReaderOrder is null
+                || !options.LocalMetadataReaderOrder.Contains("Nfo", StringComparer.OrdinalIgnoreCase))
             {
-                Type = itemType,
-                MetadataFetchers = Array.Empty<string>(),
-                MetadataFetcherOrder = Array.Empty<string>(),
-                ImageFetchers = Array.Empty<string>(),
-                ImageFetcherOrder = Array.Empty<string>()
-            });
-
-            options.TypeOptions = typeOptions.ToArray();
-            libraryFolder.UpdateLibraryOptions(options);
+                throw new InvalidOperationException(
+                    $"'{libraryName}' metadata options are not in the expected JellyBridge-safe state; refusing to rewrite them automatically.");
+            }
 
             var physicalRoot = _libraryManager.Inner.FindByPath(expectedPath, isFolder: true);
             if (physicalRoot is null)
             {
-                _logger.LogWarning(
-                    "SQLITE LIBRARY ROOT BOOTSTRAP | Library={Library} | Path={Path} | Method=ILibraryManager.ValidateTopLibraryFolders(recursive=false) | Scope=TopLevelRootsOnly | GlobalScan=NO",
-                    libraryName,
-                    expectedPath);
-
-                // Jellyfin creates physical library roots while validating only the
-                // immediate children of its aggregate root. This is not a recursive
-                // media-library scan; recursive=false stops at the top-level roots.
-                await _libraryManager.Inner
-                    .ValidateTopLibraryFolders(cancellationToken, false)
-                    .ConfigureAwait(false);
-
-                physicalRoot = _libraryManager.Inner.FindByPath(expectedPath, isFolder: true);
-                if (physicalRoot is not Folder physicalFolder)
+                var rootIsEmpty = !Directory.EnumerateFileSystemEntries(expectedPath).Any();
+                if (rootIsEmpty)
                 {
-                    throw new InvalidOperationException(
-                        $"Top-level Jellyfin validation did not create physical root '{expectedPath}' for '{libraryName}'.");
+                    _logger.LogInformation(
+                        "SQLITE LIBRARY ROOT BOOTSTRAP DEFERRED | Library={Library} | Path={Path} | Reason=EmptyRoot | GlobalScan=NO",
+                        libraryName,
+                        expectedPath);
                 }
-
-                // Bootstrap only this newly-created physical root so existing files
-                // below it are discovered. All later changes use exact-path monitor
-                // notifications and do not repeat this bootstrap.
-                await physicalFolder.RefreshMetadata(cancellationToken).ConfigureAwait(false);
-                await physicalFolder
-                    .ValidateChildren(new Progress<double>(), cancellationToken)
-                    .ConfigureAwait(false);
-
-                _logger.LogInformation(
-                    "SQLITE LIBRARY ROOT BOOTSTRAP PASS | Library={Library} | Path={Path} | RootId={RootId} | RootType={RootType} | Method=TopLevelRootValidation+TargetedPhysicalValidate | GlobalScan=NO",
-                    libraryName,
-                    expectedPath,
-                    physicalFolder.Id,
-                    physicalFolder.GetType().FullName);
+                else
+                {
+                    await BootstrapPhysicalRootAsync(
+                        libraryName,
+                        expectedPath,
+                        cancellationToken).ConfigureAwait(false);
+                }
             }
 
             _logger.LogInformation(
@@ -151,17 +127,89 @@ public sealed class SqliteLibrarySyncService
 
         await ConfigureOneAsync("Discover Movies", moviesPath, "Movie").ConfigureAwait(false);
         await ConfigureOneAsync("Discover Series", showsPath, "Series").ConfigureAwait(false);
+        await ConfigureOneAsync("Discover Movies 4K", movies4kPath, "Movie").ConfigureAwait(false);
+        await ConfigureOneAsync("Discover Series 4K", shows4kPath, "Series").ConfigureAwait(false);
     }
 
-    public void NotifyChangedPath(string mediaType, string path, string operation)
+    public async Task EnsurePhysicalRootReadyAsync(
+        string mediaType,
+        string tier,
+        CancellationToken cancellationToken)
     {
-        var fullPath = ValidateManagedPath(mediaType, path);
+        var basePath = Path.GetFullPath(FolderUtils.GetBaseDirectory());
+        var is4k = string.Equals(tier, CatalogSelectionService.FourK, StringComparison.OrdinalIgnoreCase);
+        if (!is4k)
+        {
+            return;
+        }
+
+        var libraryName = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+            ? "Discover Series 4K"
+            : "Discover Movies 4K";
+        var root = Path.GetFullPath(Path.Combine(
+            basePath,
+            string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                ? "Shows 4K"
+                : "Movies 4K"));
+
+        if (_libraryManager.Inner.FindByPath(root, isFolder: true) is not null)
+        {
+            return;
+        }
+
+        if (!Directory.EnumerateFileSystemEntries(root).Any())
+        {
+            throw new InvalidOperationException(
+                $"Cannot bootstrap '{libraryName}' before its first materialized item exists.");
+        }
+
+        await BootstrapPhysicalRootAsync(libraryName, root, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task BootstrapPhysicalRootAsync(
+        string libraryName,
+        string expectedPath,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogWarning(
+            "SQLITE LIBRARY ROOT BOOTSTRAP | Library={Library} | Path={Path} | Method=ILibraryManager.ValidateTopLibraryFolders(recursive=false) | Scope=TopLevelRootsOnly | GlobalScan=NO",
+            libraryName,
+            expectedPath);
+
+        await _libraryManager.Inner
+            .ValidateTopLibraryFolders(cancellationToken, false)
+            .ConfigureAwait(false);
+
+        var physicalRoot = _libraryManager.Inner.FindByPath(expectedPath, isFolder: true);
+        if (physicalRoot is not Folder physicalFolder)
+        {
+            throw new InvalidOperationException(
+                $"Top-level Jellyfin validation did not create physical root '{expectedPath}' for '{libraryName}'.");
+        }
+
+        await physicalFolder.RefreshMetadata(cancellationToken).ConfigureAwait(false);
+        await physicalFolder
+            .ValidateChildren(new Progress<double>(), cancellationToken)
+            .ConfigureAwait(false);
+
+        _logger.LogInformation(
+            "SQLITE LIBRARY ROOT BOOTSTRAP PASS | Library={Library} | Path={Path} | RootId={RootId} | RootType={RootType} | Method=TopLevelRootValidation+TargetedPhysicalValidate | GlobalScan=NO",
+            libraryName,
+            expectedPath,
+            physicalFolder.Id,
+            physicalFolder.GetType().FullName);
+    }
+
+    public void NotifyChangedPath(string mediaType, string tier, string path, string operation)
+    {
+        var fullPath = ValidateManagedPath(mediaType, tier, path);
         var notifyPath = ResolveNotificationPath(mediaType, fullPath);
 
         _logger.LogInformation(
-            "SQLITE PATH NOTIFY | Operation={Operation} | Media={MediaType} | ManagedPath={ManagedPath} | NotifyPath={NotifyPath} | Method=ILibraryMonitor.ReportFileSystemChanged | GlobalScan=NO",
+            "SQLITE PATH NOTIFY | Operation={Operation} | Media={MediaType} | Tier={Tier} | ManagedPath={ManagedPath} | NotifyPath={NotifyPath} | Method=ILibraryMonitor.ReportFileSystemChanged | GlobalScan=NO",
             operation,
             mediaType,
+            tier,
             fullPath,
             notifyPath);
 
@@ -178,12 +226,20 @@ public sealed class SqliteLibrarySyncService
         return Path.Combine(managedPath, "Season 00", "S00E9999.mp4");
     }
 
-    private static string ValidateManagedPath(string mediaType, string path)
+    private static string ValidateManagedPath(string mediaType, string tier, string path)
     {
         var basePath = Path.GetFullPath(FolderUtils.GetBaseDirectory());
+        var is4k = string.Equals(tier, CatalogSelectionService.FourK, StringComparison.OrdinalIgnoreCase);
+        if (!is4k && !string.Equals(tier, CatalogSelectionService.DefaultTier, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Unknown Discover tier '{tier}'.");
+        }
+
         var root = Path.GetFullPath(Path.Combine(
             basePath,
-            string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "Shows" : "Movies"));
+            string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                ? (is4k ? "Shows 4K" : "Shows")
+                : (is4k ? "Movies 4K" : "Movies")));
         var full = Path.GetFullPath(path);
         var prefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
 

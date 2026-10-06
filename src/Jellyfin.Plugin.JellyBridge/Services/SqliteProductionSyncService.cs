@@ -65,25 +65,55 @@ public sealed class SqliteProductionSyncService
 
         progress?.Report(14);
 
+        // 4K Discover is an exact tier mirror of the already-selected 1080p
+        // working set. Do not query/rank the catalog a second time.
+        var movies4k = movies
+            .Select(item => _selection.WithTier(item, CatalogSelectionService.FourK))
+            .ToArray();
+        var series4k = series
+            .Select(item => _selection.WithTier(item, CatalogSelectionService.FourK))
+            .ToArray();
+
         var current = await _stateStore
             .GetMaterializedItemsAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        var desiredCatalog = movies.Concat(series).ToArray();
+        var desiredCatalog = movies.Concat(series).Concat(movies4k).Concat(series4k).ToArray();
         var desiredPlanner = desiredCatalog.Select(item => item.ToPlannerItem()).ToArray();
         var desiredByKey = desiredCatalog.ToDictionary(
             item => new BridgeItemKey(item.MediaType, item.TmdbId, item.Tier));
 
         var plan = _planner.Build(desiredPlanner, current);
+
+        // First 4K bootstrap must be additive-only. Protect the already-working
+        // default Discover tier from any accidental ADD/UPDATE/REMOVE.
+        var has4kState = current.Values.Any(
+            state => string.Equals(state.Tier, CatalogSelectionService.FourK, StringComparison.OrdinalIgnoreCase));
+        if (!has4kState)
+        {
+            var defaultTierChanges =
+                plan.Adds.Count(item => string.Equals(item.Tier, CatalogSelectionService.DefaultTier, StringComparison.OrdinalIgnoreCase))
+                + plan.Updates.Count(item => string.Equals(item.Tier, CatalogSelectionService.DefaultTier, StringComparison.OrdinalIgnoreCase))
+                + plan.Removes.Count(item => string.Equals(item.Tier, CatalogSelectionService.DefaultTier, StringComparison.OrdinalIgnoreCase));
+
+            if (defaultTierChanges != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Initial 4K bootstrap refused because it would modify {defaultTierChanges} existing 1080p Discover item(s).");
+            }
+        }
+
         var generation = current.Count == 0
             ? 1
             : current.Values.Max(item => item.Generation) + 1;
 
         _logger.LogInformation(
-            "SQLITE MAIN SYNC PLAN | Generation={Generation} | Movies={Movies} | Series={Series} | Existing={Existing} | Add={Add} | Update={Update} | Remove={Remove} | Unchanged={Unchanged} | LegacyJson=OFF | GlobalScan=NO",
+            "SQLITE MAIN SYNC PLAN | Generation={Generation} | Movies1080p={Movies1080p} | Series1080p={Series1080p} | Movies4K={Movies4K} | Series4K={Series4K} | Existing={Existing} | Add={Add} | Update={Update} | Remove={Remove} | Unchanged={Unchanged} | LegacyJson=OFF | GlobalScan=NO",
             generation,
             movies.Count,
             series.Count,
+            movies4k.Length,
+            series4k.Length,
             current.Count,
             plan.Adds.Count,
             plan.Updates.Count,
@@ -105,7 +135,7 @@ public sealed class SqliteProductionSyncService
             progress?.Report(Math.Min(95d, value));
         }
 
-        foreach (var add in plan.Adds)
+        foreach (var add in plan.Adds.OrderBy(item => string.Equals(item.Tier, CatalogSelectionService.DefaultTier, StringComparison.Ordinal) ? 0 : 1))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var key = new BridgeItemKey(add.MediaType, add.TmdbId, add.Tier);
@@ -115,12 +145,47 @@ public sealed class SqliteProductionSyncService
                 .ApplyAsync(item, generation, null, cancellationToken)
                 .ConfigureAwait(false);
 
-            _librarySync.NotifyChangedPath(result.MediaType, result.TargetPath, "ADD");
+            try
+            {
+                await _librarySync
+                    .EnsurePhysicalRootReadyAsync(result.MediaType, result.Tier, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                if (string.Equals(result.Tier, CatalogSelectionService.FourK, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var rollbackState = await _stateStore
+                            .GetMaterializedItemsAsync(CancellationToken.None)
+                            .ConfigureAwait(false);
+                        if (rollbackState.TryGetValue(key, out var createdState))
+                        {
+                            await _materializer
+                                .RemoveAsync(createdState, CancellationToken.None)
+                                .ConfigureAwait(false);
+                        }
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        _logger.LogError(
+                            rollbackException,
+                            "Failed to roll back newly-created 4K item after physical-root bootstrap failure. Media={MediaType} TMDB={TmdbId}",
+                            result.MediaType,
+                            result.TmdbId);
+                    }
+                }
+
+                throw;
+            }
+
+            _librarySync.NotifyChangedPath(result.MediaType, result.Tier, result.TargetPath, "ADD");
             completedChanges++;
             ReportChangeProgress();
         }
 
-        foreach (var update in plan.Updates)
+        foreach (var update in plan.Updates.OrderBy(item => string.Equals(item.Tier, CatalogSelectionService.DefaultTier, StringComparison.Ordinal) ? 0 : 1))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var key = new BridgeItemKey(update.MediaType, update.TmdbId, update.Tier);
@@ -134,10 +199,10 @@ public sealed class SqliteProductionSyncService
             if (!string.IsNullOrWhiteSpace(result.PreviousPath)
                 && !string.Equals(result.PreviousPath, result.TargetPath, StringComparison.Ordinal))
             {
-                _librarySync.NotifyChangedPath(result.MediaType, result.PreviousPath, "UPDATE_OLD_PATH_REMOVED");
+                _librarySync.NotifyChangedPath(result.MediaType, result.Tier, result.PreviousPath, "UPDATE_OLD_PATH_REMOVED");
             }
 
-            _librarySync.NotifyChangedPath(result.MediaType, result.TargetPath, "UPDATE");
+            _librarySync.NotifyChangedPath(result.MediaType, result.Tier, result.TargetPath, "UPDATE");
             completedChanges++;
             ReportChangeProgress();
         }
@@ -150,7 +215,7 @@ public sealed class SqliteProductionSyncService
                 .RemoveAsync(remove, cancellationToken)
                 .ConfigureAwait(false);
 
-            _librarySync.NotifyChangedPath(result.MediaType, result.TargetPath, "REMOVE");
+            _librarySync.NotifyChangedPath(result.MediaType, result.Tier, result.TargetPath, "REMOVE");
             completedChanges++;
             ReportChangeProgress();
         }
@@ -171,7 +236,7 @@ public sealed class SqliteProductionSyncService
             watch.ElapsedMilliseconds);
 
         _logger.LogInformation(
-            "SQLITE MAIN SYNC COMPLETE | Generation={Generation} | Movies={Movies} | Series={Series} | Add={Add} | Update={Update} | Remove={Remove} | Unchanged={Unchanged} | Applied={Applied} | TotalMs={TotalMs} | GlobalScan=NO | MetadataJson=NO",
+            "SQLITE MAIN SYNC COMPLETE | Generation={Generation} | MoviesPerTier={Movies} | SeriesPerTier={Series} | TierMirror4K=YES | Add={Add} | Update={Update} | Remove={Remove} | Unchanged={Unchanged} | Applied={Applied} | TotalMs={TotalMs} | GlobalScan=NO | MetadataJson=NO",
             resultSummary.Generation,
             resultSummary.DesiredMovies,
             resultSummary.DesiredSeries,

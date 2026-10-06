@@ -58,6 +58,13 @@ public sealed class SqliteDryRunService
 
         seriesWatch.Stop();
 
+        var movies4k = movies
+            .Select(item => _selection.WithTier(item, CatalogSelectionService.FourK))
+            .ToArray();
+        var series4k = series
+            .Select(item => _selection.WithTier(item, CatalogSelectionService.FourK))
+            .ToArray();
+
         var stateWatch = Stopwatch.StartNew();
 
         var materialized =
@@ -68,6 +75,8 @@ public sealed class SqliteDryRunService
 
         var desired = movies
             .Concat(series)
+            .Concat(movies4k)
+            .Concat(series4k)
             .Select(item => item.ToPlannerItem())
             .ToArray();
 
@@ -95,7 +104,7 @@ public sealed class SqliteDryRunService
             totalWatch.ElapsedMilliseconds);
 
         _logger.LogInformation(
-            "SQLITE DRY RUN | Movies={Movies} | Series={Series} | ExistingState={ExistingState} | Add={Add} | Update={Update} | Remove={Remove} | Unchanged={Unchanged} | MoviesMs={MoviesMs} | SeriesMs={SeriesMs} | StateMs={StateMs} | PlanMs={PlanMs} | TotalMs={TotalMs}",
+            "SQLITE DRY RUN | MoviesPerTier={Movies} | SeriesPerTier={Series} | TierMirror4K=YES | ExistingState={ExistingState} | Add={Add} | Update={Update} | Remove={Remove} | Unchanged={Unchanged} | MoviesMs={MoviesMs} | SeriesMs={SeriesMs} | StateMs={StateMs} | PlanMs={PlanMs} | TotalMs={TotalMs}",
             result.DesiredMovies,
             result.DesiredSeries,
             result.ExistingState,
